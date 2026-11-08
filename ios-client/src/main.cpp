@@ -66,6 +66,11 @@ int main(int argc, char* argv[]) {
     if (stream_res.is_err()) {
         std::cerr << "[ERROR] Failed to start streaming (error code: "
                   << static_cast<int>(stream_res.error()) << ")." << std::endl;
+        std::cerr << "Hints:\n"
+                  << "  - If usbmuxd is holding the USB interface exclusively, stop it temporarily:\n"
+                  << "      sudo systemctl stop usbmuxd\n"
+                  << "  - Ensure your iPhone is unlocked with the screen turned ON\n"
+                  << "  - Tap 'Trust This Computer' if prompted on the iOS screen\n";
         session.Stop();
         return 1;
     }

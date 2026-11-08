@@ -203,6 +203,10 @@ public:
         return {0x86, 0x05};
     }
 
+    std::string GetDeviceSerial() const noexcept override {
+        return opened_serial.empty() ? "TEST-UDID-12345" : opened_serial;
+    }
+
     void SimulateIncomingData(shared::ReadOnlyBuffer chunk) {
         if (streaming_active && data_callback) {
             data_callback(chunk);

@@ -302,10 +302,19 @@ void StreamDemuxer::ProcessCompletePacket(shared::ReadOnlyBuffer packet) {
     std::memcpy(&header, packet.data(), sizeof(wire::PacketHeader));
     shared::ReadOnlyBuffer payload = packet.subspan(sizeof(wire::PacketHeader));
 
-    if (header.magic == static_cast<uint32_t>(wire::PacketMagic::Sync)) {
+    uint32_t norm_magic = header.magic | 0x20202020;
+    constexpr uint32_t kSyncNorm = static_cast<uint32_t>(wire::PacketMagic::Sync) | 0x20202020;
+    constexpr uint32_t kAsynNorm = static_cast<uint32_t>(wire::PacketMagic::Asyn) | 0x20202020;
+    constexpr uint32_t kPingNorm = static_cast<uint32_t>(wire::PacketMagic::Ping) | 0x20202020;
+
+    if (header.magic == static_cast<uint32_t>(wire::PacketMagic::Sync) || norm_magic == kSyncNorm) {
         ProcessSyncPacket(header, payload);
-    } else if (header.magic == static_cast<uint32_t>(wire::PacketMagic::Asyn)) {
+    } else if (header.magic == static_cast<uint32_t>(wire::PacketMagic::Asyn) || norm_magic == kAsynNorm) {
         ProcessAsynPacket(header, payload);
+    } else if (header.magic == static_cast<uint32_t>(wire::PacketMagic::Ping) || norm_magic == kPingNorm) {
+        wire::PacketHeader ping = clock_sync_.CreatePingPacket();
+        shared::ReadOnlyBuffer ping_buf(reinterpret_cast<const uint8_t*>(&ping), sizeof(ping));
+        transport_.SendBulkData(ping_buf, 1000);
     }
 }
 
@@ -317,14 +326,18 @@ void StreamDemuxer::ProcessSyncPacket(const wire::PacketHeader& header, shared::
     uint32_t sub_type = 0;
     std::memcpy(&sub_type, payload.data(), sizeof(uint32_t));
 
-    if (sub_type == static_cast<uint32_t>(wire::SubTypeMagic::Cwpa)) {
+    uint32_t norm_sub = sub_type | 0x20202020;
+    constexpr uint32_t kCwpaNorm = static_cast<uint32_t>(wire::SubTypeMagic::Cwpa) | 0x20202020;
+    constexpr uint32_t kTimeNorm = static_cast<uint32_t>(wire::SubTypeMagic::Time) | 0x20202020;
+
+    if (sub_type == static_cast<uint32_t>(wire::SubTypeMagic::Cwpa) || norm_sub == kCwpaNorm) {
         auto res = clock_sync_.HandleCwpaRequest(header.correlation_id, payload);
         if (res.is_ok()) {
             const auto& reply = res.value();
             shared::ReadOnlyBuffer reply_buf(reinterpret_cast<const uint8_t*>(&reply), sizeof(reply));
             transport_.SendBulkData(reply_buf, 1000);
         }
-    } else if (sub_type == static_cast<uint32_t>(wire::SubTypeMagic::Time)) {
+    } else if (sub_type == static_cast<uint32_t>(wire::SubTypeMagic::Time) || norm_sub == kTimeNorm) {
         auto res = clock_sync_.HandleTimeRequest(header.correlation_id, payload);
         if (res.is_ok()) {
             const auto& reply = res.value();
@@ -342,7 +355,11 @@ void StreamDemuxer::ProcessAsynPacket(const wire::PacketHeader& /*header*/, shar
     uint32_t sub_type = 0;
     std::memcpy(&sub_type, payload.data(), sizeof(uint32_t));
 
-    if (sub_type == static_cast<uint32_t>(wire::SubTypeMagic::Feed)) {
+    uint32_t norm_sub = sub_type | 0x20202020;
+    constexpr uint32_t kFeedNorm = static_cast<uint32_t>(wire::SubTypeMagic::Feed) | 0x20202020;
+    constexpr uint32_t kVfmtNorm = static_cast<uint32_t>(wire::SubTypeMagic::Vfmt) | 0x20202020;
+
+    if (sub_type == static_cast<uint32_t>(wire::SubTypeMagic::Feed) || norm_sub == kFeedNorm) {
         if (payload.size() < sizeof(wire::AsynFeedHeader) + sizeof(wire::CMTimeWire)) {
             return;
         }
@@ -401,7 +418,7 @@ void StreamDemuxer::ProcessAsynPacket(const wire::PacketHeader& /*header*/, shar
         shared::ReadOnlyBuffer slice_data = payload.subspan(slice_start_offset);
         ExtractAvccSlices(slice_data, pts_nanos, duration_nanos, is_keyframe);
 
-    } else if (sub_type == static_cast<uint32_t>(wire::SubTypeMagic::Vfmt)) {
+    } else if (sub_type == static_cast<uint32_t>(wire::SubTypeMagic::Vfmt) || norm_sub == kVfmtNorm) {
         FormatDescriptor desc;
         if (ParseAvccFormatDescriptor(payload, desc)) {
             if (format_callback_) {

@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 #include <memory>
 #include <stop_token>
 #include <thread>
@@ -90,21 +91,41 @@ public:
                 continue;
             }
 
-            if (!serial.empty() && desc.iSerialNumber != 0) {
+            std::string read_serial;
+            if (desc.iSerialNumber != 0) {
                 unsigned char str_buf[256]{};
                 int str_len = libusb_get_string_descriptor_ascii(
                     h, desc.iSerialNumber, str_buf, sizeof(str_buf) - 1);
                 if (str_len > 0) {
-                    std::string_view dev_serial(
-                        reinterpret_cast<char*>(str_buf), static_cast<size_t>(str_len));
-                    if (dev_serial == serial) {
-                        found_handle = h;
-                        break;
+                    size_t actual_len = std::strlen(reinterpret_cast<char*>(str_buf));
+                    if (actual_len > static_cast<size_t>(str_len)) {
+                        actual_len = static_cast<size_t>(str_len);
                     }
+                    read_serial = std::string(reinterpret_cast<char*>(str_buf), actual_len);
+                }
+            }
+
+            if (!serial.empty()) {
+                auto normalize_serial = [](std::string_view s) {
+                    std::string out;
+                    out.reserve(s.size());
+                    for (char c : s) {
+                        if (c != '-' && c != '\0') {
+                            out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+                        }
+                    }
+                    return out;
+                };
+
+                if (read_serial == serial || normalize_serial(read_serial) == normalize_serial(serial)) {
+                    found_handle = h;
+                    device_serial_ = read_serial;
+                    break;
                 }
                 libusb_close(h);
             } else {
                 found_handle = h;
+                device_serial_ = read_serial;
                 break;
             }
         }
@@ -125,17 +146,32 @@ public:
             return UsbTransportError::NotConnected;
         }
 
-        // Primary: AV mode (wIndex = 0x0002)
+        // Primary: AV mode vendor IN request (0xC0, bRequest=0x52, wIndex=0x0002)
+        uint8_t mode_resp = 0;
         int ret = libusb_control_transfer(
             handle_,
-            wire::UsbControlSetup::kVendorTypeOut,    // 0x40
-            wire::UsbControlSetup::kRequestQuickTime,  // 0x52
-            wire::UsbControlSetup::kValueDefault,     // 0x0000
-            wire::UsbControlSetup::kIndexModeAv,      // 0x0002
-            nullptr,
-            wire::UsbControlSetup::kLengthZero,       // 0x0000
-            wire::UsbControlSetup::kTimeoutMs         // 2000
+            0xC0,
+            wire::UsbControlSetup::kRequestQuickTime,
+            wire::UsbControlSetup::kValueDefault,
+            wire::UsbControlSetup::kIndexModeAv,
+            &mode_resp,
+            1,
+            wire::UsbControlSetup::kTimeoutMs
         );
+
+        if (ret < 0) {
+            // Fallback: AV mode vendor OUT transfer (0x40)
+            ret = libusb_control_transfer(
+                handle_,
+                wire::UsbControlSetup::kVendorTypeOut,    // 0x40
+                wire::UsbControlSetup::kRequestQuickTime,  // 0x52
+                wire::UsbControlSetup::kValueDefault,     // 0x0000
+                wire::UsbControlSetup::kIndexModeAv,      // 0x0002
+                nullptr,
+                wire::UsbControlSetup::kLengthZero,       // 0x0000
+                wire::UsbControlSetup::kTimeoutMs         // 2000
+            );
+        }
 
         if (ret < 0) {
             // Fallback: Legacy mode (wIndex = 0x0000)
@@ -162,6 +198,28 @@ public:
             return UsbTransportError::NotConnected;
         }
 
+        // Switch to configuration 5 (Valeria / AV streaming) if available
+        int cur_cfg = 0;
+        if (libusb_get_configuration(handle_, &cur_cfg) == 0 && cur_cfg != 5) {
+            libusb_set_auto_detach_kernel_driver(handle_, 1);
+            for (int iface_idx = 0; iface_idx < 5; ++iface_idx) {
+                if (libusb_kernel_driver_active(handle_, iface_idx) == 1) {
+                    libusb_detach_kernel_driver(handle_, iface_idx);
+                }
+            }
+            int set_cfg = libusb_set_configuration(handle_, 5);
+            if (set_cfg != 0) {
+                std::cerr << "[UsbTransport] Failed to set configuration 5 (error: "
+                          << set_cfg << ", " << libusb_error_name(set_cfg) << ")\n";
+                if (set_cfg == LIBUSB_ERROR_BUSY) {
+                    std::cerr << "[UsbTransport] Error: USB device is busy. "
+                              << "If usbmuxd is running, stop it:\n"
+                              << "               sudo systemctl stop usbmuxd\n";
+                }
+                return UsbTransportError::ClaimFailed;
+            }
+        }
+
         libusb_device* dev = libusb_get_device(handle_);
         if (!dev) {
             return UsbTransportError::DeviceNotFound;
@@ -185,21 +243,38 @@ public:
             for (int a = 0; a < iface.num_altsetting; ++a) {
                 const auto& alt = iface.altsetting[a];
                 if (alt.bInterfaceClass == wire::CoreMediaInterfaceSpec::kInterfaceClassVendor &&
-                    alt.bInterfaceSubClass == wire::CoreMediaInterfaceSpec::kInterfaceSubClassAvFeed) {
-                    target_iface = alt.bInterfaceNumber;
-                    target_alt = alt.bAlternateSetting;
+                    (alt.bInterfaceSubClass == wire::CoreMediaInterfaceSpec::kInterfaceSubClassAvFeed ||
+                     alt.bInterfaceSubClass == 0x2A)) {
 
+                    bool has_in = false;
+                    bool has_out = false;
                     for (uint8_t e = 0; e < alt.bNumEndpoints; ++e) {
                         const auto& ep = alt.endpoint[e];
                         if ((ep.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) == LIBUSB_TRANSFER_TYPE_BULK) {
                             if ((ep.bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK) == LIBUSB_ENDPOINT_IN) {
-                                eps.bulk_in = ep.bEndpointAddress;
+                                has_in = true;
                             } else {
-                                eps.bulk_out = ep.bEndpointAddress;
+                                has_out = true;
                             }
                         }
                     }
-                    break;
+
+                    if (has_in && has_out) {
+                        target_iface = alt.bInterfaceNumber;
+                        target_alt = alt.bAlternateSetting;
+
+                        for (uint8_t e = 0; e < alt.bNumEndpoints; ++e) {
+                            const auto& ep = alt.endpoint[e];
+                            if ((ep.bmAttributes & LIBUSB_TRANSFER_TYPE_MASK) == LIBUSB_TRANSFER_TYPE_BULK) {
+                                if ((ep.bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK) == LIBUSB_ENDPOINT_IN) {
+                                    eps.bulk_in = ep.bEndpointAddress;
+                                } else {
+                                    eps.bulk_out = ep.bEndpointAddress;
+                                }
+                            }
+                        }
+                        break;
+                    }
                 }
             }
             if (target_iface != -1) {
@@ -226,14 +301,17 @@ public:
             kernel_driver_detached_ = true;
         }
 
-        if (target_alt != 0) {
-            libusb_set_interface_alt_setting(handle_, target_iface, target_alt);
-        }
-
         int claim_res = libusb_claim_interface(handle_, target_iface);
         if (claim_res != 0) {
             return UsbTransportError::ClaimFailed;
         }
+
+        if (target_alt != 0) {
+            libusb_set_interface_alt_setting(handle_, target_iface, target_alt);
+        }
+
+        libusb_clear_halt(handle_, eps.bulk_in);
+        libusb_clear_halt(handle_, eps.bulk_out);
 
         claimed_interface_ = target_iface;
         endpoints_ = eps;
@@ -374,6 +452,10 @@ public:
         return endpoints_;
     }
 
+    std::string GetDeviceSerial() const noexcept {
+        return device_serial_;
+    }
+
     void CloseDevice() noexcept {
         StopStreaming();
         if (handle_) {
@@ -507,6 +589,7 @@ private:
     bool kernel_driver_detached_{false};
     bool is_connected_{false};
     UsbEndpointPair endpoints_{};
+    std::string device_serial_;
 
     std::vector<TransferEntry> transfer_pool_;
     std::atomic<int> active_transfers_{0};
@@ -566,6 +649,10 @@ bool LibUsbTransport::IsConnected() const noexcept {
 
 UsbEndpointPair LibUsbTransport::GetActiveEndpoints() const noexcept {
     return impl_->GetActiveEndpoints();
+}
+
+std::string LibUsbTransport::GetDeviceSerial() const noexcept {
+    return impl_->GetDeviceSerial();
 }
 
 void LibUsbTransport::CloseDevice() noexcept {

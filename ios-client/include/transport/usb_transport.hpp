@@ -119,6 +119,9 @@ public:
         shared::ReadOnlyBuffer data, uint32_t timeout_ms) = 0;
     virtual bool IsConnected() const noexcept = 0;
     virtual UsbEndpointPair GetActiveEndpoints() const noexcept = 0;
+    virtual std::string GetDeviceSerial() const noexcept {
+        return "";
+    }
 };
 
 /**
@@ -147,6 +150,7 @@ public:
         shared::ReadOnlyBuffer data, uint32_t timeout_ms) override;
     bool IsConnected() const noexcept override;
     UsbEndpointPair GetActiveEndpoints() const noexcept override;
+    std::string GetDeviceSerial() const noexcept override;
 
     void CloseDevice() noexcept;
 

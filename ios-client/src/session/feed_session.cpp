@@ -1,5 +1,6 @@
 #include "session/feed_session.hpp"
 
+#include <iostream>
 #include <utility>
 
 namespace ios::session {
@@ -35,46 +36,47 @@ shared::Result<void, SessionError> FeedSession::Connect() {
         return SessionError::DeviceNotConnected;
     }
 
-    auto conn_res = usbmuxd_->Connect();
-    if (conn_res.is_err()) {
-        state_.store(SessionState::Error, std::memory_order_release);
-        return SessionError::DeviceNotConnected;
-    }
-
-    auto dev_res = usbmuxd_->EnumerateDevices();
-    if (dev_res.is_err() || dev_res.value().empty()) {
-        state_.store(SessionState::Error, std::memory_order_release);
-        return SessionError::DeviceNotConnected;
-    }
-
-    const auto& devices = dev_res.value();
     uint32_t target_pid = 0;
     bool found = false;
 
-    if (target_udid_.empty()) {
-        resolved_udid_ = devices.front().serial_number;
-        target_pid = devices.front().product_id;
-        found = true;
-    } else {
-        for (const auto& dev : devices) {
-            if (dev.serial_number == target_udid_) {
-                resolved_udid_ = dev.serial_number;
-                target_pid = dev.product_id;
-                found = true;
-                break;
+    auto conn_res = usbmuxd_->Connect();
+    if (conn_res.is_ok()) {
+        auto dev_res = usbmuxd_->EnumerateDevices();
+        if (dev_res.is_err() || dev_res.value().empty()) {
+            state_.store(SessionState::Error, std::memory_order_release);
+            return SessionError::DeviceNotConnected;
+        }
+
+        const auto& devices = dev_res.value();
+        if (target_udid_.empty()) {
+            resolved_udid_ = devices.front().serial_number;
+            target_pid = devices.front().product_id;
+            found = true;
+        } else {
+            for (const auto& dev : devices) {
+                if (dev.serial_number == target_udid_) {
+                    resolved_udid_ = dev.serial_number;
+                    target_pid = dev.product_id;
+                    found = true;
+                    break;
+                }
             }
         }
-    }
 
-    if (!found) {
-        state_.store(SessionState::Error, std::memory_order_release);
-        return SessionError::DeviceNotConnected;
-    }
+        if (!found) {
+            state_.store(SessionState::Error, std::memory_order_release);
+            return SessionError::DeviceNotConnected;
+        }
 
-    auto pair_res = usbmuxd_->VerifyDevicePairing(resolved_udid_);
-    if (pair_res.is_err() || !pair_res.value()) {
-        state_.store(SessionState::Error, std::memory_order_release);
-        return SessionError::PairingNotTrusted;
+        auto pair_res = usbmuxd_->VerifyDevicePairing(resolved_udid_);
+        if (pair_res.is_err() || !pair_res.value()) {
+            state_.store(SessionState::Error, std::memory_order_release);
+            return SessionError::PairingNotTrusted;
+        }
+    } else {
+        // Direct USB fallback when usbmuxd daemon is stopped on Linux
+        resolved_udid_ = target_udid_;
+        target_pid = 0x12A8;
     }
 
     state_.store(SessionState::SwitchingCoreMediaMode, std::memory_order_release);
@@ -89,6 +91,10 @@ shared::Result<void, SessionError> FeedSession::Connect() {
     if (open_res.is_err()) {
         state_.store(SessionState::Error, std::memory_order_release);
         return SessionError::DeviceNotConnected;
+    }
+
+    if (resolved_udid_.empty() && transport_) {
+        resolved_udid_ = transport_->GetDeviceSerial();
     }
 
     auto mode_res = transport_->TriggerCoreMediaMode();
@@ -131,12 +137,15 @@ shared::Result<void, SessionError> FeedSession::Start(const StreamConfiguration&
     demuxer_->Initialize([this](const protocol::FormatDescriptor& desc) {
         OnFormatChanged(desc);
     });
+
     demuxer_->Start();
 
     auto stream_res = transport_->StartStreaming([this](shared::ReadOnlyBuffer chunk) {
         OnRawUsbDataReceived(chunk);
     });
     if (stream_res.is_err()) {
+        std::cerr << "[FeedSession] transport_->StartStreaming failed with error: "
+                  << static_cast<int>(stream_res.error()) << std::endl;
         demuxer_->Stop();
         state_.store(SessionState::Error, std::memory_order_release);
         return SessionError::TransportStreamingFailed;
@@ -146,6 +155,8 @@ shared::Result<void, SessionError> FeedSession::Start(const StreamConfiguration&
 
     auto hs_res = handshake_->ExecuteHandshake(config);
     if (hs_res.is_err()) {
+        std::cerr << "[FeedSession] handshake_->ExecuteHandshake failed with error: "
+                  << static_cast<int>(hs_res.error()) << std::endl;
         demuxer_->Stop();
         transport_->StopStreaming();
         state_.store(SessionState::Error, std::memory_order_release);

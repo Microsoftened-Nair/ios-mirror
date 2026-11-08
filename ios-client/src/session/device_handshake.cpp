@@ -1,6 +1,7 @@
 #include "session/device_handshake.hpp"
 
 #include <cstring>
+#include <iostream>
 #include <vector>
 
 namespace ios::session {
@@ -59,24 +60,28 @@ shared::Result<void, HandshakeError> DeviceHandshake::ExecuteHandshake(const Str
     shared::ReadOnlyBuffer ping_buf(reinterpret_cast<const uint8_t*>(&ping), sizeof(ping));
     auto ping_res = transport_.SendBulkData(ping_buf, 1000);
     if (ping_res.is_err()) {
+        std::cerr << "[Handshake] Step 1 Send PING failed: " << static_cast<int>(ping_res.error()) << std::endl;
         return HandshakeError::TransportError;
     }
 
     // Step 2: Send Clock Parameters (32-byte SYNC clok packet, timeout 1000 ms)
     auto clock_res = SendClockParameters();
     if (clock_res.is_err()) {
+        std::cerr << "[Handshake] Step 2 SendClockParameters failed: " << static_cast<int>(clock_res.error()) << std::endl;
         return clock_res.error();
     }
 
     // Step 3: Send Stream Parameters (28-byte SPRP need packet, timeout 1000 ms)
     auto stream_res = SendStreamParameters(config);
     if (stream_res.is_err()) {
+        std::cerr << "[Handshake] Step 3 SendStreamParameters failed: " << static_cast<int>(stream_res.error()) << std::endl;
         return stream_res.error();
     }
 
     // Step 4: Set Stream Enabled (SPRP vfmt XML property list, timeout 2000 ms)
     auto enable_res = SetStreamEnabled(true);
     if (enable_res.is_err()) {
+        std::cerr << "[Handshake] Step 4 SetStreamEnabled failed: " << static_cast<int>(enable_res.error()) << std::endl;
         return enable_res.error();
     }
 
