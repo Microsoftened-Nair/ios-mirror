@@ -61,10 +61,26 @@ add_executable(test_stream_demuxer
     ios-client/tests/test_stream_demuxer.cpp
 )
 target_link_libraries(test_stream_demuxer PRIVATE ios_protocol)
-
 add_test(NAME test_stream_demuxer COMMAND test_stream_demuxer)
+
+# Session library
+add_library(ios_session STATIC
+    ios-client/src/session/device_handshake.cpp
+    ios-client/src/session/feed_session.cpp
+)
+target_link_libraries(ios_session PUBLIC ios_protocol ios_transport)
+
+# Executable test_feed_session
+add_executable(test_feed_session
+    ios-client/tests/test_feed_session.cpp
+)
+target_compile_definitions(test_feed_session PRIVATE IOS_MIRROR_CMAKE_BUILD=1)
+target_link_libraries(test_feed_session PRIVATE ios_session)
+
+add_test(NAME test_feed_session COMMAND test_feed_session)
 
 # Aggregated test target
 add_custom_target(ios_transport_tests ALL
-    DEPENDS test_usbmuxd_client test_usb_transport test_stream_demuxer
+    DEPENDS test_usbmuxd_client test_usb_transport test_stream_demuxer test_feed_session
 )
+
