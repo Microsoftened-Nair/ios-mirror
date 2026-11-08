@@ -63,12 +63,19 @@ add_executable(test_stream_demuxer
 target_link_libraries(test_stream_demuxer PRIVATE ios_protocol)
 add_test(NAME test_stream_demuxer COMMAND test_stream_demuxer)
 
+# Presentation library
+add_library(ios_presentation STATIC
+    ios-client/src/presentation/sdl_renderer.cpp
+)
+target_link_libraries(ios_presentation PUBLIC ios_video SDL2)
+
 # Session library
 add_library(ios_session STATIC
     ios-client/src/session/device_handshake.cpp
     ios-client/src/session/feed_session.cpp
+    ios-client/src/session/ios_device_session.cpp
 )
-target_link_libraries(ios_session PUBLIC ios_protocol ios_transport)
+target_link_libraries(ios_session PUBLIC ios_protocol ios_transport ios_video ios_presentation)
 
 # Executable test_feed_session
 add_executable(test_feed_session
@@ -93,9 +100,17 @@ add_executable(test_hardware_decoder
 target_link_libraries(test_hardware_decoder PRIVATE ios_video)
 add_test(NAME test_hardware_decoder COMMAND test_hardware_decoder)
 
+# Executable test_presentation_lifecycle
+add_executable(test_presentation_lifecycle
+    ios-client/tests/test_presentation_lifecycle.cpp
+)
+target_link_libraries(test_presentation_lifecycle PRIVATE ios_presentation ios_video)
+add_test(NAME test_presentation_lifecycle COMMAND test_presentation_lifecycle)
+
 # Aggregated test target
 add_custom_target(ios_transport_tests ALL
-    DEPENDS test_usbmuxd_client test_usb_transport test_stream_demuxer test_feed_session test_hardware_decoder
+    DEPENDS test_usbmuxd_client test_usb_transport test_stream_demuxer test_feed_session test_hardware_decoder test_presentation_lifecycle
 )
+
 
 
