@@ -49,7 +49,22 @@ target_link_libraries(test_usb_transport PRIVATE ios_transport)
 
 add_test(NAME test_usb_transport COMMAND test_usb_transport)
 
+# Protocol library
+add_library(ios_protocol STATIC
+    ios-client/src/protocol/clock_synchronizer.cpp
+    ios-client/src/protocol/stream_demuxer.cpp
+)
+target_link_libraries(ios_protocol PUBLIC ios_transport)
+
+# Executable test_stream_demuxer
+add_executable(test_stream_demuxer
+    ios-client/tests/test_stream_demuxer.cpp
+)
+target_link_libraries(test_stream_demuxer PRIVATE ios_protocol)
+
+add_test(NAME test_stream_demuxer COMMAND test_stream_demuxer)
+
 # Aggregated test target
 add_custom_target(ios_transport_tests ALL
-    DEPENDS test_usbmuxd_client test_usb_transport
+    DEPENDS test_usbmuxd_client test_usb_transport test_stream_demuxer
 )
