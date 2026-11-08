@@ -107,10 +107,17 @@ add_executable(test_presentation_lifecycle
 target_link_libraries(test_presentation_lifecycle PRIVATE ios_presentation ios_video)
 add_test(NAME test_presentation_lifecycle COMMAND test_presentation_lifecycle)
 
+# Main executable
+add_executable(ios_mirror
+    ios-client/src/main.cpp
+)
+target_link_libraries(ios_mirror PRIVATE ios_session)
+
 # Aggregated test target
 add_custom_target(ios_transport_tests ALL
     DEPENDS test_usbmuxd_client test_usb_transport test_stream_demuxer test_feed_session test_hardware_decoder test_presentation_lifecycle
 )
+
 
 
 
