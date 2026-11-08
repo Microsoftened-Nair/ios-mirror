@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 
@@ -25,6 +26,10 @@ extern "C" {
 #else
 #include "decoded_frame_pool.hpp"
 #endif
+
+namespace ios::protocol {
+struct VideoSample;
+}
 
 namespace ios::video {
 
@@ -87,11 +92,29 @@ public:
                                                  const DecoderConfig& config = {});
 
     /**
+     * @brief Ingests an H.264 slice or NAL unit packet without copying data.
+     */
+    shared::Result<void, DecoderError> IngestSample(const protocol::VideoSample& sample);
+    shared::Result<void, DecoderError> IngestSample(shared::ReadOnlyBuffer buffer,
+                                                   uint64_t pts_nanos,
+                                                   bool is_keyframe);
+
+    /**
+     * @brief Drains all available decoded frames from FFmpeg into DecodedFramePool.
+     */
+    shared::Result<void, DecoderError> RetrieveDecodedFrames(uint64_t pts_nanos, bool is_keyframe);
+
+    /**
+     * @brief Flushes all pending codec buffers (e.g. on orientation change or stream discontinuity).
+     */
+    void Flush() noexcept;
+
+    /**
      * @brief Closes the codec context and releases all allocated FFmpeg structures.
      */
     void Close() noexcept;
 
-    bool IsInitialized() const noexcept { return is_initialized_; }
+    bool IsInitialized() const noexcept { return is_initialized_.load(std::memory_order_acquire); }
     HardwareAccelerationType GetActiveAccelerationType() const noexcept;
     enum AVPixelFormat GetTargetHwPixelFormat() const noexcept { return active_hw_pix_fmt_; }
     DecodedFramePool& GetFramePool() noexcept { return pool_; }
@@ -113,7 +136,7 @@ private:
     enum AVHWDeviceType active_hw_type_{AV_HWDEVICE_TYPE_NONE};
     enum AVPixelFormat active_hw_pix_fmt_{AV_PIX_FMT_NONE};
 
-    bool is_initialized_{false};
+    std::atomic<bool> is_initialized_{false};
     bool is_software_fallback_{false};
 };
 

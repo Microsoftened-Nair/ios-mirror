@@ -6,11 +6,19 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/buffer.h>
 #include <libavutil/dict.h>
+#include <libavutil/error.h>
+#include <libavutil/frame.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/mem.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixfmt.h>
 }
+
+#if __has_include("protocol/stream_demuxer.hpp")
+#include "protocol/stream_demuxer.hpp"
+#elif __has_include("ios-client/include/protocol/stream_demuxer.hpp")
+#include "ios-client/include/protocol/stream_demuxer.hpp"
+#endif
 
 namespace ios::video {
 
@@ -24,6 +32,8 @@ HardwareDecoder::~HardwareDecoder() noexcept {
 }
 
 void HardwareDecoder::Close() noexcept {
+    is_initialized_.store(false, std::memory_order_release);
+
     if (codec_ctx_) {
         avcodec_free_context(&codec_ctx_);
         codec_ctx_ = nullptr;
@@ -39,8 +49,18 @@ void HardwareDecoder::Close() noexcept {
 
     active_hw_type_ = AV_HWDEVICE_TYPE_NONE;
     active_hw_pix_fmt_ = AV_PIX_FMT_NONE;
-    is_initialized_ = false;
     is_software_fallback_ = false;
+}
+
+void HardwareDecoder::Flush() noexcept {
+    if (codec_ctx_ && is_initialized_.load(std::memory_order_acquire)) {
+        avcodec_flush_buffers(codec_ctx_);
+    }
+    if (packet_) {
+        av_packet_unref(packet_);
+        packet_->data = nullptr;
+        packet_->size = 0;
+    }
 }
 
 HardwareAccelerationType HardwareDecoder::GetActiveAccelerationType() const noexcept {
@@ -282,7 +302,95 @@ shared::Result<void, DecoderError> HardwareDecoder::Initialize(
         return open_res.error();
     }
 
-    is_initialized_ = true;
+    is_initialized_.store(true, std::memory_order_release);
+    return {};
+}
+
+shared::Result<void, DecoderError> HardwareDecoder::IngestSample(
+    shared::ReadOnlyBuffer buffer,
+    uint64_t pts_nanos,
+    bool is_keyframe) {
+
+    if (!is_initialized_.load(std::memory_order_acquire) || !codec_ctx_ || !packet_) {
+        return DecoderError::CodecOpenFailed;
+    }
+    if (buffer.empty() || buffer.data() == nullptr) {
+        return DecoderError::ParametersInvalid;
+    }
+
+    packet_->data = const_cast<uint8_t*>(buffer.data());
+    packet_->size = static_cast<int>(buffer.size());
+    packet_->pts = static_cast<int64_t>(pts_nanos);
+    packet_->dts = packet_->pts;
+
+    if (is_keyframe) {
+        packet_->flags |= AV_PKT_FLAG_KEY;
+    } else {
+        packet_->flags &= ~AV_PKT_FLAG_KEY;
+    }
+
+    int ret = avcodec_send_packet(codec_ctx_, packet_);
+    if (ret == AVERROR(EAGAIN)) {
+        auto drain_res = RetrieveDecodedFrames(pts_nanos, is_keyframe);
+        if (drain_res.is_err()) {
+            packet_->data = nullptr;
+            packet_->size = 0;
+            return drain_res;
+        }
+        ret = avcodec_send_packet(codec_ctx_, packet_);
+    }
+
+    packet_->data = nullptr;
+    packet_->size = 0;
+
+    if (ret < 0 && ret != AVERROR(EAGAIN)) {
+        return DecoderError::PacketSubmissionFailed;
+    }
+
+    return RetrieveDecodedFrames(pts_nanos, is_keyframe);
+}
+
+shared::Result<void, DecoderError> HardwareDecoder::IngestSample(const protocol::VideoSample& sample) {
+    return IngestSample(sample.as_span(), sample.pts_nanos, sample.is_keyframe);
+}
+
+shared::Result<void, DecoderError> HardwareDecoder::RetrieveDecodedFrames(
+    uint64_t pts_nanos,
+    bool is_keyframe) {
+
+    if (!codec_ctx_ || !is_initialized_.load(std::memory_order_acquire)) {
+        return DecoderError::CodecOpenFailed;
+    }
+
+    while (true) {
+        AVFrame* scratch = pool_.GetScratchFrame();
+        if (!scratch) {
+            return DecoderError::FrameRetrievalFailed;
+        }
+
+        int ret = avcodec_receive_frame(codec_ctx_, scratch);
+        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+            break;
+        }
+        if (ret < 0) {
+            return DecoderError::FrameRetrievalFailed;
+        }
+
+        uint64_t frame_pts = pts_nanos;
+        if (scratch->pts != AV_NOPTS_VALUE && scratch->pts >= 0) {
+            frame_pts = static_cast<uint64_t>(scratch->pts);
+        }
+
+        bool frame_is_key = is_keyframe;
+#if defined(AV_FRAME_FLAG_KEY)
+        if ((scratch->flags & AV_FRAME_FLAG_KEY) != 0) {
+            frame_is_key = true;
+        }
+#endif
+
+        pool_.PublishFrame(frame_pts, frame_is_key);
+    }
+
     return {};
 }
 

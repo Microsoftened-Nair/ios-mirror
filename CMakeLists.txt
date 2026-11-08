@@ -79,8 +79,23 @@ target_link_libraries(test_feed_session PRIVATE ios_session)
 
 add_test(NAME test_feed_session COMMAND test_feed_session)
 
+# Video library
+add_library(ios_video STATIC
+    ios-client/src/video/decoded_frame_pool.cpp
+    ios-client/src/video/hardware_decoder.cpp
+)
+target_link_libraries(ios_video PUBLIC ios_protocol avcodec avutil)
+
+# Executable test_hardware_decoder
+add_executable(test_hardware_decoder
+    ios-client/tests/test_hardware_decoder.cpp
+)
+target_link_libraries(test_hardware_decoder PRIVATE ios_video)
+add_test(NAME test_hardware_decoder COMMAND test_hardware_decoder)
+
 # Aggregated test target
 add_custom_target(ios_transport_tests ALL
-    DEPENDS test_usbmuxd_client test_usb_transport test_stream_demuxer test_feed_session
+    DEPENDS test_usbmuxd_client test_usb_transport test_stream_demuxer test_feed_session test_hardware_decoder
 )
+
 
