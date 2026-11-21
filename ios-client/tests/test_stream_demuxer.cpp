@@ -352,22 +352,39 @@ void TestFormatDescriptorParsing() {
 }
 
 void TestPingHeartbeat() {
-    std::cout << "[Test] Running Heartbeat Ping Thread test..." << std::endl;
+    std::cout << "[Test] Running device-initiated PING / heartbeat test..." << std::endl;
     MockTransport transport;
     ios::protocol::StreamDemuxer demuxer(transport);
     demuxer.Initialize(nullptr);
 
+    // 1. The host must not speak first: no writes before the device's PING.
     demuxer.Start();
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    demuxer.Stop();
+    assert(transport.GetSentCount() == 0);
+    assert(!demuxer.HasSeenDevicePing());
+    assert(!demuxer.WaitForDevicePing(std::chrono::milliseconds(20)));
 
-    // At least one PING packet should have been transmitted
-    assert(transport.GetSentCount() >= 1);
-    auto ping_pkt = transport.GetLastSentPacket();
-    assert(ping_pkt.size() == sizeof(ios::protocol::wire::PacketHeader));
-    const auto* hdr = reinterpret_cast<const ios::protocol::wire::PacketHeader*>(ping_pkt.data());
-    assert(hdr->magic == static_cast<uint32_t>(ios::protocol::wire::PacketMagic::Ping));
-    std::cout << "[Test] Heartbeat Ping Thread test passed." << std::endl;
+    // 2. Device PING (0x70696E67, 0x0000000100000000) is answered immediately with the same 16 bytes.
+    uint8_t device_ping[16] = {0};
+    const uint32_t len = 16, magic = 0x70696E67;
+    const uint64_t payload = 0x0000000100000000ULL;
+    std::memcpy(device_ping, &len, 4);
+    std::memcpy(device_ping + 4, &magic, 4);
+    std::memcpy(device_ping + 8, &payload, 8);
+    demuxer.IngestRawData(shared::ReadOnlyBuffer(device_ping, sizeof(device_ping)));
+
+    assert(demuxer.HasSeenDevicePing());
+    assert(demuxer.WaitForDevicePing(std::chrono::milliseconds(0)));
+    assert(transport.GetSentCount() == 1);
+    auto reply = transport.GetLastSentPacket();
+    assert(reply.size() == 16);
+    assert(std::memcmp(reply.data(), device_ping, 16) == 0);
+
+    // 3. Afterwards the 1 Hz keep-alive runs.
+    std::this_thread::sleep_for(std::chrono::milliseconds(1300));
+    demuxer.Stop();
+    assert(transport.GetSentCount() >= 2);
+    std::cout << "[Test] Device-initiated PING / heartbeat test passed." << std::endl;
 }
 
 } // namespace

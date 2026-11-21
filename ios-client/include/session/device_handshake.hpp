@@ -1,6 +1,8 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
+#include <functional>
 #include <string>
 
 #if __has_include("types/common_types.hpp")
@@ -45,6 +47,8 @@ struct StreamConfiguration {
     bool request_high_quality{true};
     uint32_t screen_width{0};
     uint32_t screen_height{0};
+    /// How long to wait for the iPhone's opening PING on Bulk IN before giving up.
+    uint32_t device_ping_timeout_ms{30000};
 };
 
 /**
@@ -74,17 +78,34 @@ public:
     DeviceHandshake& operator=(DeviceHandshake&&) = delete;
 
     /**
-     * @brief Executes the four-step CoreMedia activation handshake sequentially.
+     * @brief Source of "has the device PINGed us yet?" (normally StreamDemuxer::WaitForDevicePing).
+     * Must be set before ExecuteHandshake().
+     */
+    using DevicePingWaiter = std::function<bool(std::chrono::milliseconds)>;
+    void SetDevicePingWaiter(DevicePingWaiter waiter) { device_ping_waiter_ = std::move(waiter); }
+
+    /**
+     * @brief Device-initiated CoreMedia start-up.
+     *
+     * The iPhone opens the exchange with its own PING on Bulk IN; the host must not write to Bulk OUT
+     * before that (the endpoint does not accept data until the device's streaming state machine is
+     * running, which is what produced the Bulk OUT timeout). The reply PING is sent by the demuxer the
+     * moment the device PING is parsed, so this call just waits for that to have happened.
+     * Everything after the PING (SYNC/ASYN clock and format negotiation) is device-driven and is
+     * answered reactively by the StreamDemuxer, not scripted here.
      */
     shared::Result<void, HandshakeError> ExecuteHandshake(const StreamConfiguration& config);
 
     /**
      * @brief Transmits a 32-byte SYNC clok packet configuring clock domain parameters.
+     * @deprecated Host-initiated packet that is not part of the device-driven protocol; no longer called
+     * by ExecuteHandshake().
      */
     shared::Result<void, HandshakeError> SendClockParameters();
 
     /**
      * @brief Transmits a 28-byte SPRP need packet specifying framerate and quality preferences.
+     * @deprecated See SendClockParameters().
      */
     shared::Result<void, HandshakeError> SendStreamParameters(const StreamConfiguration& config);
 
@@ -96,6 +117,7 @@ public:
 private:
     transport::IUsbTransport& transport_;
     protocol::ClockSynchronizer& clock_sync_;
+    DevicePingWaiter device_ping_waiter_;
     uint64_t correlation_counter_{1};
 };
 

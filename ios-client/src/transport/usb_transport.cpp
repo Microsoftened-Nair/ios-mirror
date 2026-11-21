@@ -7,6 +7,7 @@
 #include <iostream>
 #include <memory>
 #include <stop_token>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -17,6 +18,51 @@
 #endif
 
 namespace ios::transport {
+
+namespace {
+
+/**
+ * @brief Finds the configuration that exposes the QuickTime/CoreMedia interface.
+ *
+ * The interface is vendor class 0xFF / subclass 0x2A (two bulk endpoints). iOS only lists a
+ * configuration containing it after the vendor "enable" request (see TriggerCoreMediaMode), so
+ * "listed" is also how we detect that the mode switch has happened.
+ *
+ * @return bConfigurationValue of that configuration, or -1 if no configuration exposes it.
+ */
+int FindQuickTimeConfigValue(libusb_device* dev) {
+    libusb_device_descriptor desc{};
+    if (!dev || libusb_get_device_descriptor(dev, &desc) != 0) {
+        return -1;
+    }
+
+    for (uint8_t c = 0; c < desc.bNumConfigurations; ++c) {
+        libusb_config_descriptor* cfg = nullptr;
+        if (libusb_get_config_descriptor(dev, c, &cfg) != 0 || !cfg) {
+            continue;
+        }
+
+        int found = -1;
+        for (uint8_t i = 0; i < cfg->bNumInterfaces && found < 0; ++i) {
+            for (int a = 0; a < cfg->interface[i].num_altsetting; ++a) {
+                const auto& alt = cfg->interface[i].altsetting[a];
+                if (alt.bInterfaceClass == wire::CoreMediaInterfaceSpec::kInterfaceClassVendor &&
+                    alt.bInterfaceSubClass == wire::CoreMediaInterfaceSpec::kInterfaceSubClassAvFeed) {
+                    found = cfg->bConfigurationValue;
+                    break;
+                }
+            }
+        }
+        libusb_free_config_descriptor(cfg);
+
+        if (found >= 0) {
+            return found;
+        }
+    }
+    return -1;
+}
+
+} // namespace
 
 class LibUsbTransport::Impl {
 public:
@@ -141,56 +187,70 @@ public:
         return {};
     }
 
+    /**
+     * @brief Arms the iOS "Valeria"/QuickTime USB configuration.
+     *
+     * The enable request is a vendor control transfer with direction Host-to-Device:
+     *   bmRequestType=0x40, bRequest=0x52, wValue=0, wIndex=2, wLength=0.
+     * (wIndex=0 is the matching *disable*.) The phone then drops off the bus and re-enumerates with an
+     * extra configuration containing the 0xFF/0x2A bulk interface, so the old handle becomes invalid and the
+     * device must be re-opened. An earlier version issued this as a Device-to-Host (0xC0) read, which
+     * does not arm the interface: both bulk endpoints then time out with 0 bytes.
+     */
     shared::Result<void, UsbTransportError> TriggerCoreMediaMode() {
         if (!handle_) {
             return UsbTransportError::NotConnected;
         }
 
-        // Primary: AV mode vendor IN request (0xC0, bRequest=0x52, wIndex=0x0002)
-        uint8_t mode_resp = 0;
-        int ret = libusb_control_transfer(
-            handle_,
-            0xC0,
-            wire::UsbControlSetup::kRequestQuickTime,
-            wire::UsbControlSetup::kValueDefault,
-            wire::UsbControlSetup::kIndexModeAv,
-            &mode_resp,
-            1,
-            wire::UsbControlSetup::kTimeoutMs
-        );
+        using namespace std::chrono_literals;
+        auto has_qt = [](libusb_device* d) { return FindQuickTimeConfigValue(d) >= 0; };
 
-        if (ret < 0) {
-            // Fallback: AV mode vendor OUT transfer (0x40)
-            ret = libusb_control_transfer(
-                handle_,
-                wire::UsbControlSetup::kVendorTypeOut,    // 0x40
-                wire::UsbControlSetup::kRequestQuickTime,  // 0x52
-                wire::UsbControlSetup::kValueDefault,     // 0x0000
-                wire::UsbControlSetup::kIndexModeAv,      // 0x0002
-                nullptr,
-                wire::UsbControlSetup::kLengthZero,       // 0x0000
-                wire::UsbControlSetup::kTimeoutMs         // 2000
-            );
+        int cur_cfg = 0;
+        libusb_get_configuration(handle_, &cur_cfg);
+
+        // Always issue the AV mode vendor control transfer (0x40, 0x52, 0, 2) to arm
+        // the iOS CoreMedia streaming state machine on the connected iPhone.
+        int ret = SendQuickTimeModeControl(wire::UsbControlSetup::kIndexModeAv);
+        if (ret == LIBUSB_ERROR_ACCESS || ret == LIBUSB_ERROR_NOT_SUPPORTED) {
+            std::cerr << "[UsbTransport] Mode switch control transfer rejected: "
+                      << libusb_error_name(ret) << " (check udev rules / permissions)\n";
+            return UsbTransportError::VendorControlFailed;
         }
 
-        if (ret < 0) {
-            // Fallback: Legacy mode (wIndex = 0x0000)
-            ret = libusb_control_transfer(
-                handle_,
-                wire::UsbControlSetup::kVendorTypeOut,
-                wire::UsbControlSetup::kRequestQuickTime,
-                wire::UsbControlSetup::kValueDefault,
-                wire::UsbControlSetup::kIndexModeLegacy, // 0x0000
-                nullptr,
-                wire::UsbControlSetup::kLengthZero,
-                wire::UsbControlSetup::kTimeoutMs
-            );
-            if (ret < 0) {
+        bool dropped = (ret == LIBUSB_ERROR_NO_DEVICE) || WaitForDeviceToDrop(2000ms);
+        if (dropped || !has_qt(libusb_get_device(handle_))) {
+            if (!WaitForReenumeration(has_qt, 10000ms)) {
+                std::cerr << "[UsbTransport] Device did not re-enumerate with a QuickTime configuration "
+                          << "(unlock the phone, accept 'Trust', or replug the cable)\n";
                 return UsbTransportError::VendorControlFailed;
             }
         }
+        std::this_thread::sleep_for(1000ms);
 
         return {};
+    }
+
+    /**
+     * @brief Best-effort switch-off of the QuickTime config so the next run starts clean.
+     */
+    void DeactivateCoreMediaMode() noexcept {
+        if (!handle_) {
+            return;
+        }
+        StopStreaming();
+        if (claimed_interface_ >= 0) {
+            libusb_release_interface(handle_, claimed_interface_);
+            claimed_interface_ = -1;
+        }
+        SendQuickTimeModeControl(wire::UsbControlSetup::kIndexModeLegacy);
+        // Restore standard configuration 4 so usbmuxd and iOS pairing remain healthy
+        libusb_set_auto_detach_kernel_driver(handle_, 1);
+        for (int iface_idx = 0; iface_idx < 5; ++iface_idx) {
+            if (libusb_kernel_driver_active(handle_, iface_idx) == 1) {
+                libusb_detach_kernel_driver(handle_, iface_idx);
+            }
+        }
+        libusb_set_configuration(handle_, 4);
     }
 
     shared::Result<void, UsbTransportError> ClaimCoreMediaInterface() {
@@ -198,22 +258,47 @@ public:
             return UsbTransportError::NotConnected;
         }
 
-        // Switch to configuration 5 (Valeria / AV streaming) if available
+        // Select whichever configuration exposes the QuickTime interface (5 on the iPhone 16 seen so far,
+        // but the number is not fixed, so look it up instead of hard-coding it).
+        const int qt_cfg = FindQuickTimeConfigValue(libusb_get_device(handle_));
+        if (qt_cfg < 0) {
+            std::cerr << "[UsbTransport] No USB configuration exposes the QuickTime interface; "
+                      << "the mode switch has not been applied\n";
+            return UsbTransportError::InterfaceNotFound;
+        }
+
         int cur_cfg = 0;
-        if (libusb_get_configuration(handle_, &cur_cfg) == 0 && cur_cfg != 5) {
+        if (libusb_get_configuration(handle_, &cur_cfg) == 0 && cur_cfg != qt_cfg) {
             libusb_set_auto_detach_kernel_driver(handle_, 1);
             for (int iface_idx = 0; iface_idx < 5; ++iface_idx) {
                 if (libusb_kernel_driver_active(handle_, iface_idx) == 1) {
                     libusb_detach_kernel_driver(handle_, iface_idx);
                 }
             }
-            int set_cfg = libusb_set_configuration(handle_, 5);
+            int set_cfg = libusb_set_configuration(handle_, qt_cfg);
+            if (set_cfg == LIBUSB_ERROR_BUSY) {
+                std::cout << "[UsbTransport] USB device is busy (held by usbmuxd). Retrying for up to 30s...\n";
+                std::cout << "               (Run 'sudo systemctl stop usbmuxd' in your terminal now)\n";
+                int sys_r = std::system("usbmuxd -X 2>/dev/null");
+                (void)sys_r;
+
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+                while (std::chrono::steady_clock::now() < deadline && set_cfg == LIBUSB_ERROR_BUSY) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                    for (int iface_idx = 0; iface_idx < 5; ++iface_idx) {
+                        if (libusb_kernel_driver_active(handle_, iface_idx) == 1) {
+                            libusb_detach_kernel_driver(handle_, iface_idx);
+                        }
+                    }
+                    set_cfg = libusb_set_configuration(handle_, qt_cfg);
+                }
+            }
             if (set_cfg != 0) {
-                std::cerr << "[UsbTransport] Failed to set configuration 5 (error: "
+                std::cerr << "[UsbTransport] Failed to set configuration " << qt_cfg << " (error: "
                           << set_cfg << ", " << libusb_error_name(set_cfg) << ")\n";
                 if (set_cfg == LIBUSB_ERROR_BUSY) {
                     std::cerr << "[UsbTransport] Error: USB device is busy. "
-                              << "If usbmuxd is running, stop it:\n"
+                              << "Stop usbmuxd:\n"
                               << "               sudo systemctl stop usbmuxd\n";
                 }
                 return UsbTransportError::ClaimFailed;
@@ -343,6 +428,9 @@ public:
             IoWorker(st);
         });
 
+        std::cout << "[UsbTransport] Starting streaming on Bulk IN 0x" << std::hex << static_cast<int>(endpoints_.bulk_in)
+                  << " and Bulk OUT 0x" << static_cast<int>(endpoints_.bulk_out) << std::dec << std::endl;
+
         // Submit all 16 ring buffer transfers
         for (size_t i = 0; i < kTransferPoolSize; ++i) {
             int r = libusb_submit_transfer(transfer_pool_[i].transfer);
@@ -351,8 +439,12 @@ public:
                 active_transfers_++;
             } else {
                 transfer_pool_[i].in_flight = false;
+                std::cerr << "[UsbTransport] libusb_submit_transfer[" << i << "] failed: "
+                          << r << " (" << libusb_error_name(r) << ")\n";
             }
         }
+
+        std::cout << "[UsbTransport] Submitted " << active_transfers_.load() << " in-flight transfers\n";
 
         if (active_transfers_ == 0) {
             StopStreaming();
@@ -475,6 +567,69 @@ public:
     }
 
 private:
+    int SendQuickTimeModeControl(uint16_t w_index) noexcept {
+        return libusb_control_transfer(
+            handle_,
+            wire::UsbControlSetup::kVendorTypeOut,     // 0x40: Host-to-Device | Vendor | Device
+            wire::UsbControlSetup::kRequestQuickTime,  // 0x52
+            wire::UsbControlSetup::kValueDefault,      // wValue = 0
+            w_index,                                   // 2 = enable, 0 = disable
+            nullptr,
+            wire::UsbControlSetup::kLengthZero,
+            wire::UsbControlSetup::kTimeoutMs);
+    }
+
+    bool WaitForDeviceToDrop(std::chrono::milliseconds timeout) noexcept {
+        if (!handle_) {
+            return false;
+        }
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline) {
+            uint16_t status = 0;
+            int r = libusb_control_transfer(
+                handle_,
+                0x80, // Device-to-Host | Standard | Device
+                0x00, // GET_STATUS
+                0,
+                0,
+                reinterpret_cast<uint8_t*>(&status),
+                sizeof(status),
+                100
+            );
+            if (r < 0) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        return false;
+    }
+
+    /**
+     * @brief Drops the current handle and polls until the same device (by serial) is back on the bus
+     * and @p predicate accepts it. Leaves handle_ open on success.
+     */
+    template <typename Pred>
+    bool WaitForReenumeration(Pred predicate, std::chrono::milliseconds timeout) {
+        const std::string serial = device_serial_;
+        CloseDevice();
+
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+            // PID 0 = any Apple PID, since the product id can change between USB modes.
+            auto res = OpenDevice(wire::CoreMediaInterfaceSpec::kAppleVendorId, 0, serial);
+            if (res.is_err()) {
+                continue;  // still re-enumerating
+            }
+            if (predicate(libusb_get_device(handle_))) {
+                return true;
+            }
+            CloseDevice(); // Close handle so next iteration can reopen
+        }
+        return false;
+    }
+
     bool AllocateTransferPool() {
         transfer_pool_.resize(kTransferPoolSize);
         for (size_t i = 0; i < kTransferPoolSize; ++i) {
@@ -546,9 +701,12 @@ private:
 
     void HandleTransferCompletion(struct libusb_transfer* transfer) {
         if (transfer->status == LIBUSB_TRANSFER_COMPLETED) {
-            if (transfer->actual_length > 0 && data_callback_) {
-                shared::ReadOnlyBuffer buf(transfer->buffer, static_cast<size_t>(transfer->actual_length));
-                data_callback_(buf);
+            if (transfer->actual_length > 0) {
+                std::cout << "[UsbTransport] Inbound packet received: " << transfer->actual_length << " bytes\n";
+                if (data_callback_) {
+                    shared::ReadOnlyBuffer buf(transfer->buffer, static_cast<size_t>(transfer->actual_length));
+                    data_callback_(buf);
+                }
             }
 
             // Resubmit immediately if streaming is active
@@ -564,6 +722,7 @@ private:
         } else if (transfer->status == LIBUSB_TRANSFER_CANCELLED) {
             // Cancelled during teardown
         } else {
+            std::cerr << "[UsbTransport] Transfer error: status=" << transfer->status << "\n";
             // Other error condition, retry if streaming
             if (is_streaming_ && !io_thread_.get_stop_token().stop_requested()) {
                 int r = libusb_submit_transfer(transfer);
@@ -624,6 +783,10 @@ shared::Result<void, UsbTransportError> LibUsbTransport::TriggerCoreMediaMode() 
 
 shared::Result<void, UsbTransportError> LibUsbTransport::ClaimCoreMediaInterface() {
     return impl_->ClaimCoreMediaInterface();
+}
+
+void LibUsbTransport::DeactivateCoreMediaMode() noexcept {
+    impl_->DeactivateCoreMediaMode();
 }
 
 shared::Result<void, UsbTransportError> LibUsbTransport::StartStreaming(UsbDataCallback callback) {

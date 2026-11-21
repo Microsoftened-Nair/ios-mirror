@@ -455,25 +455,44 @@ shared::Result<std::string, UsbmuxdError> UsbmuxdClient::ReadPairRecord(std::str
         return UsbmuxdError::ProtocolViolation;
     }
 
-    std::vector<std::string> candidates;
+    std::vector<std::string> udid_variants;
+    udid_variants.emplace_back(udid);
+    if (udid.size() == 24 && udid.find('-') == std::string_view::npos) {
+        udid_variants.push_back(std::string(udid.substr(0, 8)) + "-" + std::string(udid.substr(8)));
+    } else if (udid.size() == 25 && udid[8] == '-') {
+        std::string nodash;
+        nodash.reserve(24);
+        nodash.append(udid.substr(0, 8));
+        nodash.append(udid.substr(9));
+        udid_variants.push_back(std::move(nodash));
+    }
+
+    std::vector<std::string> candidate_dirs;
     if (!pair_record_dir_.empty()) {
-        candidates.push_back(pair_record_dir_ + "/" + std::string(udid) + ".plist");
+        candidate_dirs.push_back(pair_record_dir_);
     }
 
     const char* env_path = std::getenv("USBMUXD_LOCKDOWN_PATH");
     if (env_path && env_path[0] != '\0') {
-        candidates.push_back(std::string(env_path) + "/" + std::string(udid) + ".plist");
+        candidate_dirs.push_back(env_path);
     }
 
-    candidates.push_back("/var/lib/lockdown/" + std::string(udid) + ".plist");
+    candidate_dirs.push_back("/var/lib/lockdown");
 
     const char* home = std::getenv("HOME");
     if (home && home[0] != '\0') {
-        candidates.push_back(std::string(home) + "/.lockdown/" + std::string(udid) + ".plist");
+        candidate_dirs.push_back(std::string(home) + "/.lockdown");
     } else {
         struct passwd* pw = ::getpwuid(::getuid());
         if (pw && pw->pw_dir) {
-            candidates.push_back(std::string(pw->pw_dir) + "/.lockdown/" + std::string(udid) + ".plist");
+            candidate_dirs.push_back(std::string(pw->pw_dir) + "/.lockdown");
+        }
+    }
+
+    std::vector<std::string> candidates;
+    for (const auto& dir : candidate_dirs) {
+        for (const auto& u : udid_variants) {
+            candidates.push_back(dir + "/" + u + ".plist");
         }
     }
 

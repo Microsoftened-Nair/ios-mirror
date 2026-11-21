@@ -1,5 +1,6 @@
 #include "session/feed_session.hpp"
 
+#include <chrono>
 #include <iostream>
 #include <utility>
 
@@ -73,6 +74,9 @@ shared::Result<void, SessionError> FeedSession::Connect() {
             state_.store(SessionState::Error, std::memory_order_release);
             return SessionError::PairingNotTrusted;
         }
+
+        // Close our client connection to usbmuxd so it does not keep a pending session open
+        usbmuxd_->Disconnect();
     } else {
         // Direct USB fallback when usbmuxd daemon is stopped on Linux
         resolved_udid_ = target_udid_;
@@ -140,6 +144,14 @@ shared::Result<void, SessionError> FeedSession::Start(const StreamConfiguration&
 
     demuxer_->Start();
 
+    // The device can PING the moment the bulk-IN reads are queued, so the state must already accept
+    // incoming data; OnRawUsbDataReceived() drops everything outside NegotiatingHandshake/Streaming.
+    state_.store(SessionState::NegotiatingHandshake, std::memory_order_release);
+
+    handshake_->SetDevicePingWaiter([demuxer = demuxer_.get()](std::chrono::milliseconds timeout) {
+        return demuxer->WaitForDevicePing(timeout);
+    });
+
     auto stream_res = transport_->StartStreaming([this](shared::ReadOnlyBuffer chunk) {
         OnRawUsbDataReceived(chunk);
     });
@@ -151,14 +163,13 @@ shared::Result<void, SessionError> FeedSession::Start(const StreamConfiguration&
         return SessionError::TransportStreamingFailed;
     }
 
-    state_.store(SessionState::NegotiatingHandshake, std::memory_order_release);
-
     auto hs_res = handshake_->ExecuteHandshake(config);
     if (hs_res.is_err()) {
         std::cerr << "[FeedSession] handshake_->ExecuteHandshake failed with error: "
                   << static_cast<int>(hs_res.error()) << std::endl;
         demuxer_->Stop();
         transport_->StopStreaming();
+        transport_->DeactivateCoreMediaMode();
         state_.store(SessionState::Error, std::memory_order_release);
         return SessionError::HandshakeFailed;
     }
@@ -188,14 +199,13 @@ void FeedSession::Stop() noexcept {
         return;
     }
 
-    if (handshake_) {
-        handshake_->SetStreamEnabled(false);
-    }
     if (demuxer_) {
         demuxer_->Stop();
     }
     if (transport_) {
         transport_->StopStreaming();
+        // Switch the QuickTime USB config off so the next run starts from a clean device state.
+        transport_->DeactivateCoreMediaMode();
     }
 
     state_.store(SessionState::Disconnected, std::memory_order_release);

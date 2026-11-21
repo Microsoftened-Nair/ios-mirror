@@ -80,11 +80,13 @@ uint64_t ClockSynchronizer::DeviceTimeToHostTime(uint64_t device_nanos) const no
 }
 
 wire::PacketHeader ClockSynchronizer::CreatePingPacket() noexcept {
-    uint64_t corr = correlation_counter_++;
+    // A PING is always the same 16 bytes: length=16, magic 'ping', then the fixed 8-byte value
+    // 0x0000000100000000 (little-endian on the wire: 00 00 00 00 01 00 00 00). It carries no counter.
+    constexpr uint64_t kPingPayload = 0x0000000100000000ULL;
     return wire::PacketHeader(
         static_cast<uint32_t>(sizeof(wire::PacketHeader)),
         wire::PacketMagic::Ping,
-        corr
+        kPingPayload
     );
 }
 

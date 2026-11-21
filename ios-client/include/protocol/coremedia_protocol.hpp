@@ -5,37 +5,46 @@
 namespace ios::protocol::wire {
 
 /**
- * @brief Constructs a 32-bit FourCC integer from four character literals in Little-Endian byte order.
+ * @brief Builds a CoreMedia FourCC as the big-endian integer of its (lowercase) ASCII characters,
+ * e.g. 'p','i','n','g' -> 0x70696E67.
+ *
+ * The device writes these 32-bit values little-endian, so on the wire the bytes appear reversed
+ * ("gnip"). Earlier versions used uppercase letters composed little-endian ("PING" -> 0x474E4950),
+ * which never matches what the iPhone sends.
  */
 constexpr uint32_t MakeFourCC(char a, char b, char c, char d) noexcept {
-    return static_cast<uint32_t>(static_cast<uint8_t>(a)) |
-           (static_cast<uint32_t>(static_cast<uint8_t>(b)) << 8) |
-           (static_cast<uint32_t>(static_cast<uint8_t>(c)) << 16) |
-           (static_cast<uint32_t>(static_cast<uint8_t>(d)) << 24);
+    return (static_cast<uint32_t>(static_cast<uint8_t>(a)) << 24) |
+           (static_cast<uint32_t>(static_cast<uint8_t>(b)) << 16) |
+           (static_cast<uint32_t>(static_cast<uint8_t>(c)) << 8) |
+           static_cast<uint32_t>(static_cast<uint8_t>(d));
 }
 
 /**
  * @brief Primary CoreMedia packet magic values.
  */
 enum class PacketMagic : uint32_t {
-    Ping = MakeFourCC('P', 'I', 'N', 'G'), // 0x474E4950
-    Sync = MakeFourCC('S', 'Y', 'N', 'C'), // 0x434E5953
-    Asyn = MakeFourCC('A', 'S', 'Y', 'N'), // 0x4E595341
-    Sprp = MakeFourCC('S', 'P', 'R', 'P'), // 0x50525053
-    Hbea = MakeFourCC('H', 'B', 'E', 'A'), // 0x41454248
+    Ping = MakeFourCC('p', 'i', 'n', 'g'), // 0x70696E67
+    Sync = MakeFourCC('s', 'y', 'n', 'c'), // 0x73796E63
+    Asyn = MakeFourCC('a', 's', 'y', 'n'), // 0x6173796E
+    Sprp = MakeFourCC('s', 'p', 'r', 'p'), // 0x73707270
+    Hbea = MakeFourCC('h', 'b', 'e', 'a'), // 0x68626561 (not seen in the QuickTime flow; unverified)
+    Rply = MakeFourCC('r', 'p', 'l', 'y'), // 0x72706C79 (Sync Reply)
 };
 
 /**
  * @brief CoreMedia message subtype magic values.
  */
 enum class SubTypeMagic : uint32_t {
-    Cwpa = MakeFourCC('C', 'W', 'P', 'A'), // 0x41505743 (Clock Wait Packet Acknowledge)
-    Time = MakeFourCC('T', 'I', 'M', 'E'), // 0x454D4954 (Clock Time Synchronization)
-    Feed = MakeFourCC('f', 'e', 'e', 'd'), // 0x64656566 (Asynchronous Media Stream Feed)
-    Afmt = MakeFourCC('A', 'F', 'M', 'T'), // 0x544D4641 (Audio Format Descriptor)
-    Vfmt = MakeFourCC('V', 'F', 'M', 'T'), // 0x544D4656 (Video Format Descriptor)
-    Need = MakeFourCC('N', 'E', 'E', 'D'), // 0x4445454E (Buffer Request / Flow Control)
-    Clok = MakeFourCC('c', 'l', 'o', 'k'), // 0x6B6F6C63 (Clock Reference)
+    Cwpa = MakeFourCC('c', 'w', 'p', 'a'), // 0x63777061 (Clock Wait Packet Acknowledge)
+    Cvrp = MakeFourCC('c', 'v', 'r', 'p'), // 0x63767270 (CoreMedia Video Request Packet)
+    Time = MakeFourCC('t', 'i', 'm', 'e'), // 0x74696D65 (Clock Time Synchronization)
+    Feed = MakeFourCC('f', 'e', 'e', 'd'), // 0x66656564 (Asynchronous Media Stream Feed)
+    Afmt = MakeFourCC('a', 'f', 'm', 't'), // 0x61666D74 (Audio Format Descriptor)
+    Vfmt = MakeFourCC('v', 'f', 'm', 't'), // 0x76666D74 (Video Format Descriptor)
+    Need = MakeFourCC('n', 'e', 'e', 'd'), // 0x6E656564 (Buffer Request / Flow Control)
+    Clok = MakeFourCC('c', 'l', 'o', 'k'), // 0x636C6F6B (Clock Reference)
+    Hpd1 = MakeFourCC('h', 'p', 'd', '1'), // 0x68706431 (Host Packet Display 1)
+    Hpa1 = MakeFourCC('h', 'p', 'a', '1'), // 0x68706131 (Host Packet Audio 1)
 };
 
 /**
@@ -101,6 +110,42 @@ struct SyncCwpaPayload {
         : sub_type(static_cast<uint32_t>(SubTypeMagic::Cwpa)),
           clock_id(clk_id),
           correlation_id(corr_id) {}
+};
+
+/**
+ * @brief 28-byte clock reference reply packet (RPLY) used for CWPA and CVRP replies.
+ */
+struct SyncClockRefReplyPacket {
+    uint32_t length{28};
+    uint32_t magic{static_cast<uint32_t>(PacketMagic::Rply)};
+    uint64_t correlation_id{0};
+    uint32_t status{0};
+    uint64_t clock_ref{0};
+
+    constexpr SyncClockRefReplyPacket() = default;
+    constexpr SyncClockRefReplyPacket(uint64_t corr_id, uint64_t clk_ref, uint32_t st = 0) noexcept
+        : length(sizeof(SyncClockRefReplyPacket)),
+          magic(static_cast<uint32_t>(PacketMagic::Rply)),
+          correlation_id(corr_id),
+          status(st),
+          clock_ref(clk_ref) {}
+};
+
+/**
+ * @brief 20-byte ASYN NEED flow control packet sent to device to request video frames.
+ */
+struct AsynNeedPacket {
+    uint32_t length{20};
+    uint32_t magic{static_cast<uint32_t>(PacketMagic::Asyn)};
+    uint64_t clock_ref{0};
+    uint32_t sub_type{static_cast<uint32_t>(SubTypeMagic::Need)};
+
+    constexpr AsynNeedPacket() = default;
+    constexpr explicit AsynNeedPacket(uint64_t clk_ref) noexcept
+        : length(sizeof(AsynNeedPacket)),
+          magic(static_cast<uint32_t>(PacketMagic::Asyn)),
+          clock_ref(clk_ref),
+          sub_type(static_cast<uint32_t>(SubTypeMagic::Need)) {}
 };
 
 /**
@@ -214,18 +259,18 @@ static_assert(sizeof(AsynFeedHeader) == 16, "AsynFeedHeader must be 16 bytes");
 static_assert(sizeof(AvccHeader) == 4, "AvccHeader must be 4 bytes");
 
 // FourCC value verification
-static_assert(static_cast<uint32_t>(PacketMagic::Ping) == 0x474E4950, "Ping magic mismatch");
-static_assert(static_cast<uint32_t>(PacketMagic::Sync) == 0x434E5953, "Sync magic mismatch");
-static_assert(static_cast<uint32_t>(PacketMagic::Asyn) == 0x4E595341, "Asyn magic mismatch");
-static_assert(static_cast<uint32_t>(PacketMagic::Sprp) == 0x50525053, "Sprp magic mismatch");
-static_assert(static_cast<uint32_t>(PacketMagic::Hbea) == 0x41454248, "Hbea magic mismatch");
+static_assert(static_cast<uint32_t>(PacketMagic::Ping) == 0x70696E67, "Ping magic mismatch");
+static_assert(static_cast<uint32_t>(PacketMagic::Sync) == 0x73796E63, "Sync magic mismatch");
+static_assert(static_cast<uint32_t>(PacketMagic::Asyn) == 0x6173796E, "Asyn magic mismatch");
+static_assert(static_cast<uint32_t>(PacketMagic::Sprp) == 0x73707270, "Sprp magic mismatch");
+static_assert(static_cast<uint32_t>(PacketMagic::Hbea) == 0x68626561, "Hbea magic mismatch");
 
-static_assert(static_cast<uint32_t>(SubTypeMagic::Cwpa) == 0x41505743, "Cwpa subtype mismatch");
-static_assert(static_cast<uint32_t>(SubTypeMagic::Time) == 0x454D4954, "Time subtype mismatch");
-static_assert(static_cast<uint32_t>(SubTypeMagic::Feed) == 0x64656566, "Feed subtype mismatch");
-static_assert(static_cast<uint32_t>(SubTypeMagic::Afmt) == 0x544D4641, "Afmt subtype mismatch");
-static_assert(static_cast<uint32_t>(SubTypeMagic::Vfmt) == 0x544D4656, "Vfmt subtype mismatch");
-static_assert(static_cast<uint32_t>(SubTypeMagic::Need) == 0x4445454E, "Need subtype mismatch");
-static_assert(static_cast<uint32_t>(SubTypeMagic::Clok) == 0x6B6F6C63, "Clok subtype mismatch");
+static_assert(static_cast<uint32_t>(SubTypeMagic::Cwpa) == 0x63777061, "Cwpa subtype mismatch");
+static_assert(static_cast<uint32_t>(SubTypeMagic::Time) == 0x74696D65, "Time subtype mismatch");
+static_assert(static_cast<uint32_t>(SubTypeMagic::Feed) == 0x66656564, "Feed subtype mismatch");
+static_assert(static_cast<uint32_t>(SubTypeMagic::Afmt) == 0x61666D74, "Afmt subtype mismatch");
+static_assert(static_cast<uint32_t>(SubTypeMagic::Vfmt) == 0x76666D74, "Vfmt subtype mismatch");
+static_assert(static_cast<uint32_t>(SubTypeMagic::Need) == 0x6E656564, "Need subtype mismatch");
+static_assert(static_cast<uint32_t>(SubTypeMagic::Clok) == 0x636C6F6B, "Clok subtype mismatch");
 
 } // namespace ios::protocol::wire

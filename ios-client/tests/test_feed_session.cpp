@@ -6,6 +6,7 @@
 #include "../src/session/feed_session.cpp"
 #endif
 
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <cstring>
@@ -179,8 +180,8 @@ public:
 
     shared::Result<void, ios::transport::UsbTransportError> StartStreaming(
         ios::transport::UsbDataCallback callback) override {
-        streaming_active = true;
         data_callback = std::move(callback);
+        streaming_active = true;  // set after the callback so another thread can safely inject data
         return {};
     }
 
@@ -220,10 +221,34 @@ public:
     std::string opened_serial;
     bool core_media_triggered{false};
     bool interface_claimed{false};
-    bool streaming_active{false};
+    std::atomic<bool> streaming_active{false};
     ios::transport::UsbDataCallback data_callback;
     std::vector<std::vector<uint8_t>> sent_data;
 };
+
+// 16-byte PING exactly as the iPhone sends it: length=16, magic 'ping' (0x70696E67), 0x0000000100000000.
+std::vector<uint8_t> MakeDevicePing() {
+    std::vector<uint8_t> ping(16, 0);
+    const uint32_t len = 16;
+    const uint32_t magic = 0x70696E67;
+    const uint64_t payload = 0x0000000100000000ULL;
+    std::memcpy(ping.data(), &len, 4);
+    std::memcpy(ping.data() + 4, &magic, 4);
+    std::memcpy(ping.data() + 8, &payload, 8);
+    return ping;
+}
+
+// Plays the iPhone: stays silent until the host has queued its bulk-IN reads, then sends its PING.
+std::thread StartDevicePingInjector(MockTransport* transport) {
+    return std::thread([transport]() {
+        for (int i = 0; i < 400 && !transport->streaming_active.load(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        auto ping = MakeDevicePing();
+        transport->SimulateIncomingData(shared::ReadOnlyBuffer(ping.data(), ping.size()));
+    });
+}
 
 void SetupValidPairRecord(const std::string& dir, const std::string& udid) {
     std::filesystem::create_directories(dir);
@@ -269,13 +294,23 @@ void TestSuccessfulSessionLifecycle() {
     // 2. Start streaming & handshake
     bool frame_notified = false;
     ios::session::StreamConfiguration config{60, true, 1920, 1080};
+    // The device opens the exchange with its own PING; the host only answers.
+    std::thread device = StartDevicePingInjector(transport_ptr);
     auto start_res = session.Start(config, [&frame_notified]() {
         frame_notified = true;
     });
+    device.join();
     assert(start_res.is_ok());
     assert(session.GetState() == ios::session::SessionState::Streaming);
     assert(transport_ptr->streaming_active);
-    assert(transport_ptr->sent_data.size() == 4); // PING, clok, need, vfmt
+
+    // Exactly one write so far: the reply PING (no host-initiated packets).
+    {
+        std::lock_guard<std::mutex> lock(transport_ptr->mutex_);
+        assert(transport_ptr->sent_data.size() == 1);
+        const auto expected = MakeDevicePing();
+        assert(transport_ptr->sent_data[0] == expected);
+    }
 
     // 3. Ingest a video sample via transport
     uint8_t nalu[] = {0x65, 0x88, 0x84, 0x00, 0x10}; // IDR
@@ -324,6 +359,33 @@ void TestSuccessfulSessionLifecycle() {
     std::cout << "[Test] TestSuccessfulSessionLifecycle passed." << std::endl;
 }
 
+void TestNoDevicePingTimesOutWithoutWriting() {
+    std::cout << "[Test] Running TestNoDevicePingTimesOutWithoutWriting..." << std::endl;
+
+    SetupValidPairRecord(kTestDir, "TEST-UDID-12345");
+    ::setenv("USBMUXD_LOCKDOWN_PATH", kTestDir.c_str(), 1);
+
+    auto mock_muxd = std::make_unique<ios::transport::UsbmuxdClient>(kMockSocketPath);
+    auto mock_transport = std::make_unique<MockTransport>();
+    auto* transport_ptr = mock_transport.get();
+
+    ios::session::FeedSession session(std::move(mock_muxd), std::move(mock_transport));
+    assert(session.Connect().is_ok());
+
+    ios::session::StreamConfiguration config{};
+    config.device_ping_timeout_ms = 300;  // device never speaks
+    auto res = session.Start(config, []() {});
+
+    assert(res.is_err());
+    assert(res.error() == ios::session::SessionError::HandshakeFailed);
+    {
+        // Regression check for the Bulk OUT timeout: nothing may be written before the device has spoken.
+        std::lock_guard<std::mutex> lock(transport_ptr->mutex_);
+        assert(transport_ptr->sent_data.empty());
+    }
+    std::cout << "[Test] TestNoDevicePingTimesOutWithoutWriting passed." << std::endl;
+}
+
 void TestPairingFailure() {
     std::cout << "[Test] Running TestPairingFailure..." << std::endl;
     std::string unpair_dir = "/tmp/mock_unpaired_dir";
@@ -370,6 +432,7 @@ int main() {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     TestSuccessfulSessionLifecycle();
+    TestNoDevicePingTimesOutWithoutWriting();
     TestPairingFailure();
     TestDeviceNotConnectedFailure(server);
 

@@ -211,6 +211,50 @@ bool ParseSpsDimensions(const std::vector<uint8_t>& sps, uint32_t& out_width, ui
     return true;
 }
 
+// 219-byte ASYN HPD1 packet (Display properties dict: Valeria=true, HEVCDecoderSupports444=true, Width=1920, Height=1200)
+constexpr uint8_t kAsynHpd1Packet[] = {
+    0xdb, 0x00, 0x00, 0x00, 0x6e, 0x79, 0x73, 0x61, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x31, 0x64, 0x70, 0x68, 0xc7, 0x00, 0x00, 0x00, 0x74, 0x63, 0x69, 0x64, 0x20, 0x00, 0x00, 0x00,
+    0x76, 0x79, 0x65, 0x6b, 0x0f, 0x00, 0x00, 0x00, 0x6b, 0x72, 0x74, 0x73, 0x56, 0x61, 0x6c, 0x65,
+    0x72, 0x69, 0x61, 0x09, 0x00, 0x00, 0x00, 0x76, 0x6c, 0x75, 0x62, 0x01, 0x2f, 0x00, 0x00, 0x00,
+    0x76, 0x79, 0x65, 0x6b, 0x1e, 0x00, 0x00, 0x00, 0x6b, 0x72, 0x74, 0x73, 0x48, 0x45, 0x56, 0x43,
+    0x44, 0x65, 0x63, 0x6f, 0x64, 0x65, 0x72, 0x53, 0x75, 0x70, 0x70, 0x6f, 0x72, 0x74, 0x73, 0x34,
+    0x34, 0x34, 0x09, 0x00, 0x00, 0x00, 0x76, 0x6c, 0x75, 0x62, 0x01, 0x70, 0x00, 0x00, 0x00, 0x76,
+    0x79, 0x65, 0x6b, 0x13, 0x00, 0x00, 0x00, 0x6b, 0x72, 0x74, 0x73, 0x44, 0x69, 0x73, 0x70, 0x6c,
+    0x61, 0x79, 0x53, 0x69, 0x7a, 0x65, 0x55, 0x00, 0x00, 0x00, 0x74, 0x63, 0x69, 0x64, 0x26, 0x00,
+    0x00, 0x00, 0x76, 0x79, 0x65, 0x6b, 0x0d, 0x00, 0x00, 0x00, 0x6b, 0x72, 0x74, 0x73, 0x57, 0x69,
+    0x64, 0x74, 0x68, 0x11, 0x00, 0x00, 0x00, 0x76, 0x62, 0x6d, 0x6e, 0x06, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x9e, 0x40, 0x27, 0x00, 0x00, 0x00, 0x76, 0x79, 0x65, 0x6b, 0x0e, 0x00, 0x00, 0x00,
+    0x6b, 0x72, 0x74, 0x73, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x11, 0x00, 0x00, 0x00, 0x76, 0x62,
+    0x6d, 0x6e, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc0, 0x92, 0x40
+};
+
+// 337-byte ASYN HPA1 template (Audio format dict)
+constexpr uint8_t kAsynHpa1Template[] = {
+    0x51, 0x01, 0x00, 0x00, 0x6e, 0x79, 0x73, 0x61, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x31, 0x61, 0x70, 0x68, 0x3d, 0x01, 0x00, 0x00, 0x74, 0x63, 0x69, 0x64, 0x34, 0x00, 0x00, 0x00,
+    0x76, 0x79, 0x65, 0x6b, 0x1b, 0x00, 0x00, 0x00, 0x6b, 0x72, 0x74, 0x73, 0x42, 0x75, 0x66, 0x66,
+    0x65, 0x72, 0x41, 0x68, 0x65, 0x61, 0x64, 0x49, 0x6e, 0x74, 0x65, 0x72, 0x76, 0x61, 0x6c, 0x11,
+    0x00, 0x00, 0x00, 0x76, 0x62, 0x6d, 0x6e, 0x06, 0xe4, 0xa5, 0x9b, 0xc4, 0x20, 0xb0, 0xb2, 0x3f,
+    0x28, 0x00, 0x00, 0x00, 0x76, 0x79, 0x65, 0x6b, 0x11, 0x00, 0x00, 0x00, 0x6b, 0x72, 0x74, 0x73,
+    0x64, 0x65, 0x76, 0x69, 0x63, 0x65, 0x55, 0x49, 0x44, 0x0f, 0x00, 0x00, 0x00, 0x76, 0x72, 0x74,
+    0x73, 0x56, 0x61, 0x6c, 0x65, 0x72, 0x69, 0x61, 0x2e, 0x00, 0x00, 0x00, 0x76, 0x79, 0x65, 0x6b,
+    0x15, 0x00, 0x00, 0x00, 0x6b, 0x72, 0x74, 0x73, 0x53, 0x63, 0x72, 0x65, 0x65, 0x6e, 0x4c, 0x61,
+    0x74, 0x65, 0x6e, 0x63, 0x79, 0x11, 0x00, 0x00, 0x00, 0x76, 0x62, 0x6d, 0x6e, 0x06, 0x7b, 0x14,
+    0xae, 0x47, 0xe1, 0x7a, 0xa4, 0x3f, 0x57, 0x00, 0x00, 0x00, 0x76, 0x79, 0x65, 0x6b, 0x0f, 0x00,
+    0x00, 0x00, 0x6b, 0x72, 0x74, 0x73, 0x66, 0x6f, 0x72, 0x6d, 0x61, 0x74, 0x73, 0x40, 0x00, 0x00,
+    0x00, 0x76, 0x74, 0x61, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x70, 0xe7, 0x40, 0x6d, 0x63, 0x70,
+    0x6c, 0x0c, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
+    0x00, 0x02, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x70, 0xe7, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x70, 0xe7, 0x40, 0x2b, 0x00, 0x00,
+    0x00, 0x76, 0x79, 0x65, 0x6b, 0x16, 0x00, 0x00, 0x00, 0x6b, 0x72, 0x74, 0x73, 0x45, 0x44, 0x49,
+    0x44, 0x41, 0x43, 0x33, 0x53, 0x75, 0x70, 0x70, 0x6f, 0x72, 0x74, 0x0d, 0x00, 0x00, 0x00, 0x76,
+    0x62, 0x6d, 0x6e, 0x03, 0x00, 0x00, 0x00, 0x00, 0x29, 0x00, 0x00, 0x00, 0x76, 0x79, 0x65, 0x6b,
+    0x12, 0x00, 0x00, 0x00, 0x6b, 0x72, 0x74, 0x73, 0x64, 0x65, 0x76, 0x69, 0x63, 0x65, 0x4e, 0x61,
+    0x6d, 0x65, 0x0f, 0x00, 0x00, 0x00, 0x76, 0x72, 0x74, 0x73, 0x56, 0x61, 0x6c, 0x65, 0x72, 0x69,
+    0x61
+};
+
 } // namespace
 
 StreamDemuxer::StreamDemuxer(transport::IUsbTransport& transport)
@@ -226,21 +270,42 @@ void StreamDemuxer::Initialize(FormatChangeCallback format_callback) {
     reassembly_offset_ = 0;
     clock_sync_.Reset();
     output_queue_.Reset();
+    device_ping_count_.store(0, std::memory_order_release);
+    video_clock_ref_.store(0, std::memory_order_release);
 }
 
 void StreamDemuxer::Start() {
     Stop();
     ping_thread_ = std::jthread([this](std::stop_token stop_token) {
+        // Do not write anything until the device has sent its own PING (see Start() docs).
+        while (!stop_token.stop_requested() && !HasSeenDevicePing()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
         while (!stop_token.stop_requested()) {
-            wire::PacketHeader ping = clock_sync_.CreatePingPacket();
-            shared::ReadOnlyBuffer ping_buf(reinterpret_cast<const uint8_t*>(&ping), sizeof(ping));
-            transport_.SendBulkData(ping_buf, 1000);
-
+            // The reply to the device's own PING has just gone out; the first keep-alive is due 1 s later.
             for (int i = 0; i < 20 && !stop_token.stop_requested(); ++i) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
             }
+            if (stop_token.stop_requested()) {
+                break;
+            }
+
+            wire::PacketHeader ping = clock_sync_.CreatePingPacket();
+            shared::ReadOnlyBuffer ping_buf(reinterpret_cast<const uint8_t*>(&ping), sizeof(ping));
+            transport_.SendBulkData(ping_buf, 1000);
         }
     });
+}
+
+bool StreamDemuxer::WaitForDevicePing(std::chrono::milliseconds timeout) const {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (!HasSeenDevicePing()) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return true;
 }
 
 void StreamDemuxer::Stop() noexcept {
@@ -312,9 +377,11 @@ void StreamDemuxer::ProcessCompletePacket(shared::ReadOnlyBuffer packet) {
     } else if (header.magic == static_cast<uint32_t>(wire::PacketMagic::Asyn) || norm_magic == kAsynNorm) {
         ProcessAsynPacket(header, payload);
     } else if (header.magic == static_cast<uint32_t>(wire::PacketMagic::Ping) || norm_magic == kPingNorm) {
+        // Device-initiated PING: answer it, and only then mark the device as ready.
         wire::PacketHeader ping = clock_sync_.CreatePingPacket();
         shared::ReadOnlyBuffer ping_buf(reinterpret_cast<const uint8_t*>(&ping), sizeof(ping));
         transport_.SendBulkData(ping_buf, 1000);
+        device_ping_count_.fetch_add(1, std::memory_order_acq_rel);
     }
 }
 
@@ -328,15 +395,60 @@ void StreamDemuxer::ProcessSyncPacket(const wire::PacketHeader& header, shared::
 
     uint32_t norm_sub = sub_type | 0x20202020;
     constexpr uint32_t kCwpaNorm = static_cast<uint32_t>(wire::SubTypeMagic::Cwpa) | 0x20202020;
+    constexpr uint32_t kCvrpNorm = static_cast<uint32_t>(wire::SubTypeMagic::Cvrp) | 0x20202020;
     constexpr uint32_t kTimeNorm = static_cast<uint32_t>(wire::SubTypeMagic::Time) | 0x20202020;
+    constexpr uint32_t kClokNorm = static_cast<uint32_t>(wire::SubTypeMagic::Clok) | 0x20202020;
+    constexpr uint32_t kAfmtNorm = static_cast<uint32_t>(wire::SubTypeMagic::Afmt) | 0x20202020;
 
     if (sub_type == static_cast<uint32_t>(wire::SubTypeMagic::Cwpa) || norm_sub == kCwpaNorm) {
         auto res = clock_sync_.HandleCwpaRequest(header.correlation_id, payload);
-        if (res.is_ok()) {
+        if (payload.size() >= 20) {
+            // Real iOS QuickTime exchange:
+            // 1. Send ASYN HPD1 twice (signals display mirroring support)
+            // 2. Send CWPA-RPLY (status 0, clock_ref = device_clock_ref + 1000)
+            // 3. Send ASYN HPA1 (signals audio pipeline support)
+            uint64_t dev_clk = 0;
+            std::memcpy(&dev_clk, payload.data() + 12, sizeof(uint64_t));
+            if (dev_clk == 0) {
+                dev_clk = header.correlation_id;
+            }
+
+            SendHpd1();
+            SendHpd1();
+            SendClockRefReply(header.correlation_id, dev_clk + 1000);
+            SendHpa1(dev_clk);
+        } else if (res.is_ok()) {
             const auto& reply = res.value();
             shared::ReadOnlyBuffer reply_buf(reinterpret_cast<const uint8_t*>(&reply), sizeof(reply));
             transport_.SendBulkData(reply_buf, 1000);
         }
+    } else if (sub_type == static_cast<uint32_t>(wire::SubTypeMagic::Cvrp) || norm_sub == kCvrpNorm) {
+        uint64_t dev_clk = 0;
+        if (payload.size() >= 20) {
+            std::memcpy(&dev_clk, payload.data() + 12, sizeof(uint64_t));
+        } else if (payload.size() >= 8) {
+            std::memcpy(&dev_clk, payload.data() + 4, sizeof(uint64_t));
+        }
+        if (dev_clk == 0) {
+            dev_clk = header.correlation_id;
+        }
+        video_clock_ref_.store(dev_clk, std::memory_order_release);
+
+        // Send ASYN NEED to request video stream
+        SendNeed(dev_clk);
+
+        // Send CVRP reply (status 0, clock_ref = device_clock_ref + 0x1000AF)
+        SendClockRefReply(header.correlation_id, dev_clk + 0x1000AF);
+    } else if (sub_type == static_cast<uint32_t>(wire::SubTypeMagic::Clok) || norm_sub == kClokNorm) {
+        uint64_t clk_ref = 0;
+        if (payload.size() >= 12) {
+            std::memcpy(&clk_ref, payload.data() + 4, sizeof(uint64_t));
+        }
+        SendClockRefReply(header.correlation_id, clk_ref + 0x10000);
+    } else if (sub_type == static_cast<uint32_t>(wire::SubTypeMagic::Afmt) || norm_sub == kAfmtNorm) {
+        SendClockRefReply(header.correlation_id, 0);
+    } else if (sub_type == 0x676F2120) { // 'og! '
+        SendClockRefReply(header.correlation_id, 0);
     } else if (sub_type == static_cast<uint32_t>(wire::SubTypeMagic::Time) || norm_sub == kTimeNorm) {
         auto res = clock_sync_.HandleTimeRequest(header.correlation_id, payload);
         if (res.is_ok()) {
@@ -417,6 +529,12 @@ void StreamDemuxer::ProcessAsynPacket(const wire::PacketHeader& /*header*/, shar
 
         shared::ReadOnlyBuffer slice_data = payload.subspan(slice_start_offset);
         ExtractAvccSlices(slice_data, pts_nanos, duration_nanos, is_keyframe);
+
+        // Send flow control NEED to request subsequent frame from iOS
+        uint64_t vclk = video_clock_ref_.load(std::memory_order_acquire);
+        if (vclk != 0) {
+            SendNeed(vclk);
+        }
 
     } else if (sub_type == static_cast<uint32_t>(wire::SubTypeMagic::Vfmt) || norm_sub == kVfmtNorm) {
         FormatDescriptor desc;
@@ -550,6 +668,31 @@ bool StreamDemuxer::ParseAvccFormatDescriptor(shared::ReadOnlyBuffer vfmt_payloa
     }
 
     return out_desc.is_valid();
+}
+
+void StreamDemuxer::SendHpd1() {
+    shared::ReadOnlyBuffer buf(kAsynHpd1Packet, sizeof(kAsynHpd1Packet));
+    transport_.SendBulkData(buf, 1000);
+}
+
+void StreamDemuxer::SendHpa1(uint64_t device_clock_ref) {
+    uint8_t hpa1[sizeof(kAsynHpa1Template)];
+    std::memcpy(hpa1, kAsynHpa1Template, sizeof(hpa1));
+    std::memcpy(hpa1 + 8, &device_clock_ref, sizeof(uint64_t));
+    shared::ReadOnlyBuffer buf(hpa1, sizeof(hpa1));
+    transport_.SendBulkData(buf, 1000);
+}
+
+void StreamDemuxer::SendNeed(uint64_t clock_ref) {
+    wire::AsynNeedPacket need(clock_ref);
+    shared::ReadOnlyBuffer buf(reinterpret_cast<const uint8_t*>(&need), sizeof(need));
+    transport_.SendBulkData(buf, 1000);
+}
+
+void StreamDemuxer::SendClockRefReply(uint64_t correlation_id, uint64_t clock_ref) {
+    wire::SyncClockRefReplyPacket rply(correlation_id, clock_ref);
+    shared::ReadOnlyBuffer buf(reinterpret_cast<const uint8_t*>(&rply), sizeof(rply));
+    transport_.SendBulkData(buf, 1000);
 }
 
 } // namespace ios::protocol

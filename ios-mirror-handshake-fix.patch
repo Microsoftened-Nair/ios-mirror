@@ -1,0 +1,968 @@
+diff --git a/ios-client/include/protocol/coremedia_protocol.hpp b/ios-client/include/protocol/coremedia_protocol.hpp
+index bc2085f..99a4eba 100644
+--- a/ios-client/include/protocol/coremedia_protocol.hpp
++++ b/ios-client/include/protocol/coremedia_protocol.hpp
+@@ -5,37 +5,42 @@
+ namespace ios::protocol::wire {
+ 
+ /**
+- * @brief Constructs a 32-bit FourCC integer from four character literals in Little-Endian byte order.
++ * @brief Builds a CoreMedia FourCC as the big-endian integer of its (lowercase) ASCII characters,
++ * e.g. 'p','i','n','g' -> 0x70696E67.
++ *
++ * The device writes these 32-bit values little-endian, so on the wire the bytes appear reversed
++ * ("gnip"). Earlier versions used uppercase letters composed little-endian ("PING" -> 0x474E4950),
++ * which never matches what the iPhone sends.
+  */
+ constexpr uint32_t MakeFourCC(char a, char b, char c, char d) noexcept {
+-    return static_cast<uint32_t>(static_cast<uint8_t>(a)) |
+-           (static_cast<uint32_t>(static_cast<uint8_t>(b)) << 8) |
+-           (static_cast<uint32_t>(static_cast<uint8_t>(c)) << 16) |
+-           (static_cast<uint32_t>(static_cast<uint8_t>(d)) << 24);
++    return (static_cast<uint32_t>(static_cast<uint8_t>(a)) << 24) |
++           (static_cast<uint32_t>(static_cast<uint8_t>(b)) << 16) |
++           (static_cast<uint32_t>(static_cast<uint8_t>(c)) << 8) |
++           static_cast<uint32_t>(static_cast<uint8_t>(d));
+ }
+ 
+ /**
+  * @brief Primary CoreMedia packet magic values.
+  */
+ enum class PacketMagic : uint32_t {
+-    Ping = MakeFourCC('P', 'I', 'N', 'G'), // 0x474E4950
+-    Sync = MakeFourCC('S', 'Y', 'N', 'C'), // 0x434E5953
+-    Asyn = MakeFourCC('A', 'S', 'Y', 'N'), // 0x4E595341
+-    Sprp = MakeFourCC('S', 'P', 'R', 'P'), // 0x50525053
+-    Hbea = MakeFourCC('H', 'B', 'E', 'A'), // 0x41454248
++    Ping = MakeFourCC('p', 'i', 'n', 'g'), // 0x70696E67
++    Sync = MakeFourCC('s', 'y', 'n', 'c'), // 0x73796E63
++    Asyn = MakeFourCC('a', 's', 'y', 'n'), // 0x6173796E
++    Sprp = MakeFourCC('s', 'p', 'r', 'p'), // 0x73707270
++    Hbea = MakeFourCC('h', 'b', 'e', 'a'), // 0x68626561 (not seen in the QuickTime flow; unverified)
+ };
+ 
+ /**
+  * @brief CoreMedia message subtype magic values.
+  */
+ enum class SubTypeMagic : uint32_t {
+-    Cwpa = MakeFourCC('C', 'W', 'P', 'A'), // 0x41505743 (Clock Wait Packet Acknowledge)
+-    Time = MakeFourCC('T', 'I', 'M', 'E'), // 0x454D4954 (Clock Time Synchronization)
+-    Feed = MakeFourCC('f', 'e', 'e', 'd'), // 0x64656566 (Asynchronous Media Stream Feed)
+-    Afmt = MakeFourCC('A', 'F', 'M', 'T'), // 0x544D4641 (Audio Format Descriptor)
+-    Vfmt = MakeFourCC('V', 'F', 'M', 'T'), // 0x544D4656 (Video Format Descriptor)
+-    Need = MakeFourCC('N', 'E', 'E', 'D'), // 0x4445454E (Buffer Request / Flow Control)
+-    Clok = MakeFourCC('c', 'l', 'o', 'k'), // 0x6B6F6C63 (Clock Reference)
++    Cwpa = MakeFourCC('c', 'w', 'p', 'a'), // 0x63777061 (Clock Wait Packet Acknowledge)
++    Time = MakeFourCC('t', 'i', 'm', 'e'), // 0x74696D65 (Clock Time Synchronization)
++    Feed = MakeFourCC('f', 'e', 'e', 'd'), // 0x66656564 (Asynchronous Media Stream Feed)
++    Afmt = MakeFourCC('a', 'f', 'm', 't'), // 0x61666D74 (Audio Format Descriptor)
++    Vfmt = MakeFourCC('v', 'f', 'm', 't'), // 0x76666D74 (Video Format Descriptor)
++    Need = MakeFourCC('n', 'e', 'e', 'd'), // 0x6E656564 (Buffer Request / Flow Control)
++    Clok = MakeFourCC('c', 'l', 'o', 'k'), // 0x636C6F6B (Clock Reference)
+ };
+ 
+ /**
+@@ -214,18 +219,18 @@ static_assert(sizeof(AsynFeedHeader) == 16, "AsynFeedHeader must be 16 bytes");
+ static_assert(sizeof(AvccHeader) == 4, "AvccHeader must be 4 bytes");
+ 
+ // FourCC value verification
+-static_assert(static_cast<uint32_t>(PacketMagic::Ping) == 0x474E4950, "Ping magic mismatch");
+-static_assert(static_cast<uint32_t>(PacketMagic::Sync) == 0x434E5953, "Sync magic mismatch");
+-static_assert(static_cast<uint32_t>(PacketMagic::Asyn) == 0x4E595341, "Asyn magic mismatch");
+-static_assert(static_cast<uint32_t>(PacketMagic::Sprp) == 0x50525053, "Sprp magic mismatch");
+-static_assert(static_cast<uint32_t>(PacketMagic::Hbea) == 0x41454248, "Hbea magic mismatch");
+-
+-static_assert(static_cast<uint32_t>(SubTypeMagic::Cwpa) == 0x41505743, "Cwpa subtype mismatch");
+-static_assert(static_cast<uint32_t>(SubTypeMagic::Time) == 0x454D4954, "Time subtype mismatch");
+-static_assert(static_cast<uint32_t>(SubTypeMagic::Feed) == 0x64656566, "Feed subtype mismatch");
+-static_assert(static_cast<uint32_t>(SubTypeMagic::Afmt) == 0x544D4641, "Afmt subtype mismatch");
+-static_assert(static_cast<uint32_t>(SubTypeMagic::Vfmt) == 0x544D4656, "Vfmt subtype mismatch");
+-static_assert(static_cast<uint32_t>(SubTypeMagic::Need) == 0x4445454E, "Need subtype mismatch");
+-static_assert(static_cast<uint32_t>(SubTypeMagic::Clok) == 0x6B6F6C63, "Clok subtype mismatch");
++static_assert(static_cast<uint32_t>(PacketMagic::Ping) == 0x70696E67, "Ping magic mismatch");
++static_assert(static_cast<uint32_t>(PacketMagic::Sync) == 0x73796E63, "Sync magic mismatch");
++static_assert(static_cast<uint32_t>(PacketMagic::Asyn) == 0x6173796E, "Asyn magic mismatch");
++static_assert(static_cast<uint32_t>(PacketMagic::Sprp) == 0x73707270, "Sprp magic mismatch");
++static_assert(static_cast<uint32_t>(PacketMagic::Hbea) == 0x68626561, "Hbea magic mismatch");
++
++static_assert(static_cast<uint32_t>(SubTypeMagic::Cwpa) == 0x63777061, "Cwpa subtype mismatch");
++static_assert(static_cast<uint32_t>(SubTypeMagic::Time) == 0x74696D65, "Time subtype mismatch");
++static_assert(static_cast<uint32_t>(SubTypeMagic::Feed) == 0x66656564, "Feed subtype mismatch");
++static_assert(static_cast<uint32_t>(SubTypeMagic::Afmt) == 0x61666D74, "Afmt subtype mismatch");
++static_assert(static_cast<uint32_t>(SubTypeMagic::Vfmt) == 0x76666D74, "Vfmt subtype mismatch");
++static_assert(static_cast<uint32_t>(SubTypeMagic::Need) == 0x6E656564, "Need subtype mismatch");
++static_assert(static_cast<uint32_t>(SubTypeMagic::Clok) == 0x636C6F6B, "Clok subtype mismatch");
+ 
+ } // namespace ios::protocol::wire
+diff --git a/ios-client/include/protocol/stream_demuxer.hpp b/ios-client/include/protocol/stream_demuxer.hpp
+index f0d45ef..7942195 100644
+--- a/ios-client/include/protocol/stream_demuxer.hpp
++++ b/ios-client/include/protocol/stream_demuxer.hpp
+@@ -2,6 +2,7 @@
+ 
+ #include <array>
+ #include <atomic>
++#include <chrono>
+ #include <cstddef>
+ #include <cstdint>
+ #include <functional>
+@@ -212,10 +213,28 @@ public:
+     void Initialize(FormatChangeCallback format_callback);
+ 
+     /**
+-     * @brief Starts background PING keep-alive heartbeat loop (1 Hz) on std::jthread.
++     * @brief Starts the background PING keep-alive loop (1 Hz) on std::jthread.
++     *
++     * The iPhone speaks first: it sends the initial PING and the host answers it (done in the packet
++     * handler). The keep-alive therefore stays silent until the device's first PING has been seen,
++     * so the host never writes to Bulk OUT before the device's streaming state machine is ready.
+      */
+     void Start();
+ 
++    /**
++     * @brief Blocks until the device's first PING has arrived on Bulk IN (and has been answered), or
++     * the timeout expires.
++     * @return true if the device PING was seen.
++     */
++    bool WaitForDevicePing(std::chrono::milliseconds timeout) const;
++
++    /**
++     * @brief True once at least one PING has been received from the device since Initialize().
++     */
++    bool HasSeenDevicePing() const noexcept {
++        return device_ping_count_.load(std::memory_order_acquire) > 0;
++    }
++
+     /**
+      * @brief Requests stop on heartbeat thread and safely joins.
+      */
+@@ -265,6 +284,7 @@ private:
+     size_t reassembly_offset_{0};
+ 
+     std::jthread ping_thread_;
++    std::atomic<uint64_t> device_ping_count_{0};
+ };
+ 
+ } // namespace ios::protocol
+diff --git a/ios-client/include/session/device_handshake.hpp b/ios-client/include/session/device_handshake.hpp
+index 1828645..88d8a98 100644
+--- a/ios-client/include/session/device_handshake.hpp
++++ b/ios-client/include/session/device_handshake.hpp
+@@ -1,6 +1,8 @@
+ #pragma once
+ 
++#include <chrono>
+ #include <cstdint>
++#include <functional>
+ #include <string>
+ 
+ #if __has_include("types/common_types.hpp")
+@@ -45,6 +47,8 @@ struct StreamConfiguration {
+     bool request_high_quality{true};
+     uint32_t screen_width{0};
+     uint32_t screen_height{0};
++    /// How long to wait for the iPhone's opening PING on Bulk IN before giving up.
++    uint32_t device_ping_timeout_ms{5000};
+ };
+ 
+ /**
+@@ -74,17 +78,34 @@ public:
+     DeviceHandshake& operator=(DeviceHandshake&&) = delete;
+ 
+     /**
+-     * @brief Executes the four-step CoreMedia activation handshake sequentially.
++     * @brief Source of "has the device PINGed us yet?" (normally StreamDemuxer::WaitForDevicePing).
++     * Must be set before ExecuteHandshake().
++     */
++    using DevicePingWaiter = std::function<bool(std::chrono::milliseconds)>;
++    void SetDevicePingWaiter(DevicePingWaiter waiter) { device_ping_waiter_ = std::move(waiter); }
++
++    /**
++     * @brief Device-initiated CoreMedia start-up.
++     *
++     * The iPhone opens the exchange with its own PING on Bulk IN; the host must not write to Bulk OUT
++     * before that (the endpoint does not accept data until the device's streaming state machine is
++     * running, which is what produced the Bulk OUT timeout). The reply PING is sent by the demuxer the
++     * moment the device PING is parsed, so this call just waits for that to have happened.
++     * Everything after the PING (SYNC/ASYN clock and format negotiation) is device-driven and is
++     * answered reactively by the StreamDemuxer, not scripted here.
+      */
+     shared::Result<void, HandshakeError> ExecuteHandshake(const StreamConfiguration& config);
+ 
+     /**
+      * @brief Transmits a 32-byte SYNC clok packet configuring clock domain parameters.
++     * @deprecated Host-initiated packet that is not part of the device-driven protocol; no longer called
++     * by ExecuteHandshake().
+      */
+     shared::Result<void, HandshakeError> SendClockParameters();
+ 
+     /**
+      * @brief Transmits a 28-byte SPRP need packet specifying framerate and quality preferences.
++     * @deprecated See SendClockParameters().
+      */
+     shared::Result<void, HandshakeError> SendStreamParameters(const StreamConfiguration& config);
+ 
+@@ -96,6 +117,7 @@ public:
+ private:
+     transport::IUsbTransport& transport_;
+     protocol::ClockSynchronizer& clock_sync_;
++    DevicePingWaiter device_ping_waiter_;
+     uint64_t correlation_counter_{1};
+ };
+ 
+diff --git a/ios-client/include/session/handshake_wire.hpp b/ios-client/include/session/handshake_wire.hpp
+index 481132d..a9ee71f 100644
+--- a/ios-client/include/session/handshake_wire.hpp
++++ b/ios-client/include/session/handshake_wire.hpp
+@@ -5,30 +5,31 @@
+ namespace ios::session::wire {
+ 
+ /**
+- * @brief Constructs a 32-bit FourCC integer from four character literals in Little-Endian byte order.
++ * @brief Builds a CoreMedia FourCC as the big-endian integer of its (lowercase) ASCII characters,
++ * e.g. 'p','i','n','g' -> 0x70696E67 (see protocol/coremedia_protocol.hpp).
+  */
+ constexpr uint32_t MakeFourCC(char a, char b, char c, char d) noexcept {
+-    return static_cast<uint32_t>(static_cast<uint8_t>(a)) |
+-           (static_cast<uint32_t>(static_cast<uint8_t>(b)) << 8) |
+-           (static_cast<uint32_t>(static_cast<uint8_t>(c)) << 16) |
+-           (static_cast<uint32_t>(static_cast<uint8_t>(d)) << 24);
++    return (static_cast<uint32_t>(static_cast<uint8_t>(a)) << 24) |
++           (static_cast<uint32_t>(static_cast<uint8_t>(b)) << 16) |
++           (static_cast<uint32_t>(static_cast<uint8_t>(c)) << 8) |
++           static_cast<uint32_t>(static_cast<uint8_t>(d));
+ }
+ 
+ /**
+  * @brief Primary FourCC magic identifiers utilized across QuickTime CoreMedia handshake phases.
+  */
+ enum class HandshakeMagic : uint32_t {
+-    Ping = MakeFourCC('P', 'I', 'N', 'G'), // 0x474E4950
+-    Sync = MakeFourCC('S', 'Y', 'N', 'C'), // 0x434E5953
+-    Asyn = MakeFourCC('A', 'S', 'Y', 'N'), // 0x4E595341
+-    Sprp = MakeFourCC('S', 'P', 'R', 'P'), // 0x50525053
+-    Hbea = MakeFourCC('H', 'B', 'E', 'A'), // 0x41454248
+-    Need = MakeFourCC('N', 'E', 'E', 'D'), // 0x4445454E
+-    Clok = MakeFourCC('c', 'l', 'o', 'k'), // 0x6B6F6C63
+-    Time = MakeFourCC('T', 'I', 'M', 'E'), // 0x454D4954
+-    Cwpa = MakeFourCC('C', 'W', 'P', 'A'), // 0x41505743
+-    Afmt = MakeFourCC('A', 'F', 'M', 'T'), // 0x544D4641
+-    Vfmt = MakeFourCC('V', 'F', 'M', 'T'), // 0x544D4656
++    Ping = MakeFourCC('p', 'i', 'n', 'g'), // 0x70696E67
++    Sync = MakeFourCC('s', 'y', 'n', 'c'), // 0x73796E63
++    Asyn = MakeFourCC('a', 's', 'y', 'n'), // 0x6173796E
++    Sprp = MakeFourCC('s', 'p', 'r', 'p'), // 0x73707270
++    Hbea = MakeFourCC('h', 'b', 'e', 'a'), // 0x68626561 (not seen in the QuickTime flow; unverified)
++    Need = MakeFourCC('n', 'e', 'e', 'd'), // 0x6E656564
++    Clok = MakeFourCC('c', 'l', 'o', 'k'), // 0x636C6F6B
++    Time = MakeFourCC('t', 'i', 'm', 'e'), // 0x74696D65
++    Cwpa = MakeFourCC('c', 'w', 'p', 'a'), // 0x63777061
++    Afmt = MakeFourCC('a', 'f', 'm', 't'), // 0x61666D74
++    Vfmt = MakeFourCC('v', 'f', 'm', 't'), // 0x76666D74
+ };
+ 
+ #pragma pack(push, 1)
+@@ -71,16 +72,16 @@ static_assert(sizeof(HandshakeHeader) == 16, "HandshakeHeader must be 16 bytes")
+ static_assert(sizeof(SprpPayloadHeader) == 8, "SprpPayloadHeader must be 8 bytes");
+ 
+ // FourCC value verification assertions
+-static_assert(static_cast<uint32_t>(HandshakeMagic::Ping) == 0x474E4950, "Ping magic mismatch");
+-static_assert(static_cast<uint32_t>(HandshakeMagic::Sync) == 0x434E5953, "Sync magic mismatch");
+-static_assert(static_cast<uint32_t>(HandshakeMagic::Asyn) == 0x4E595341, "Asyn magic mismatch");
+-static_assert(static_cast<uint32_t>(HandshakeMagic::Sprp) == 0x50525053, "Sprp magic mismatch");
+-static_assert(static_cast<uint32_t>(HandshakeMagic::Hbea) == 0x41454248, "Hbea magic mismatch");
+-static_assert(static_cast<uint32_t>(HandshakeMagic::Need) == 0x4445454E, "Need magic mismatch");
+-static_assert(static_cast<uint32_t>(HandshakeMagic::Clok) == 0x6B6F6C63, "Clok magic mismatch");
+-static_assert(static_cast<uint32_t>(HandshakeMagic::Time) == 0x454D4954, "Time magic mismatch");
+-static_assert(static_cast<uint32_t>(HandshakeMagic::Cwpa) == 0x41505743, "Cwpa magic mismatch");
+-static_assert(static_cast<uint32_t>(HandshakeMagic::Afmt) == 0x544D4641, "Afmt magic mismatch");
+-static_assert(static_cast<uint32_t>(HandshakeMagic::Vfmt) == 0x544D4656, "Vfmt magic mismatch");
++static_assert(static_cast<uint32_t>(HandshakeMagic::Ping) == 0x70696E67, "Ping magic mismatch");
++static_assert(static_cast<uint32_t>(HandshakeMagic::Sync) == 0x73796E63, "Sync magic mismatch");
++static_assert(static_cast<uint32_t>(HandshakeMagic::Asyn) == 0x6173796E, "Asyn magic mismatch");
++static_assert(static_cast<uint32_t>(HandshakeMagic::Sprp) == 0x73707270, "Sprp magic mismatch");
++static_assert(static_cast<uint32_t>(HandshakeMagic::Hbea) == 0x68626561, "Hbea magic mismatch");
++static_assert(static_cast<uint32_t>(HandshakeMagic::Need) == 0x6E656564, "Need magic mismatch");
++static_assert(static_cast<uint32_t>(HandshakeMagic::Clok) == 0x636C6F6B, "Clok magic mismatch");
++static_assert(static_cast<uint32_t>(HandshakeMagic::Time) == 0x74696D65, "Time magic mismatch");
++static_assert(static_cast<uint32_t>(HandshakeMagic::Cwpa) == 0x63777061, "Cwpa magic mismatch");
++static_assert(static_cast<uint32_t>(HandshakeMagic::Afmt) == 0x61666D74, "Afmt magic mismatch");
++static_assert(static_cast<uint32_t>(HandshakeMagic::Vfmt) == 0x76666D74, "Vfmt magic mismatch");
+ 
+ } // namespace ios::session::wire
+diff --git a/ios-client/include/transport/usb_transport.hpp b/ios-client/include/transport/usb_transport.hpp
+index 3551317..1935986 100644
+--- a/ios-client/include/transport/usb_transport.hpp
++++ b/ios-client/include/transport/usb_transport.hpp
+@@ -113,6 +113,13 @@ public:
+         uint16_t vid, uint16_t pid, std::string_view serial = "") = 0;
+     virtual shared::Result<void, UsbTransportError> TriggerCoreMediaMode() = 0;
+     virtual shared::Result<void, UsbTransportError> ClaimCoreMediaInterface() = 0;
++    /**
++     * @brief Turns the hidden QuickTime/CoreMedia USB configuration back off (vendor OUT 0x52, wIndex=0).
++     *
++     * Called at teardown so the next run starts from a clean device state. Default is a no-op so
++     * test doubles do not need to implement it.
++     */
++    virtual void DeactivateCoreMediaMode() noexcept {}
+     virtual shared::Result<void, UsbTransportError> StartStreaming(UsbDataCallback callback) = 0;
+     virtual void StopStreaming() noexcept = 0;
+     virtual shared::Result<size_t, UsbTransportError> SendBulkData(
+@@ -143,6 +150,7 @@ public:
+         uint16_t vid, uint16_t pid, std::string_view serial = "") override;
+     shared::Result<void, UsbTransportError> TriggerCoreMediaMode() override;
+     shared::Result<void, UsbTransportError> ClaimCoreMediaInterface() override;
++    void DeactivateCoreMediaMode() noexcept override;
+     shared::Result<void, UsbTransportError> StartStreaming(UsbDataCallback callback) override;
+     shared::Result<void, UsbTransportError> StartStreaming(RawBlockCallback callback);
+     void StopStreaming() noexcept override;
+diff --git a/ios-client/include/transport/usbmuxd_wire.hpp b/ios-client/include/transport/usbmuxd_wire.hpp
+index 007d0fc..b8a78aa 100644
+--- a/ios-client/include/transport/usbmuxd_wire.hpp
++++ b/ios-client/include/transport/usbmuxd_wire.hpp
+@@ -75,8 +75,8 @@ struct UsbControlSetup {
+     static constexpr uint8_t kVendorTypeOut = 0x40;
+     static constexpr uint8_t kRequestQuickTime = 0x52;
+     static constexpr uint16_t kValueDefault = 0x0000;
+-    static constexpr uint16_t kIndexModeAv = 0x0002;
+-    static constexpr uint16_t kIndexModeLegacy = 0x0000;
++    static constexpr uint16_t kIndexModeAv = 0x0002;      // enable hidden QuickTime (Valeria) USB config
++    static constexpr uint16_t kIndexModeLegacy = 0x0000;  // wIndex 0 = DISABLE the QuickTime config again
+     static constexpr uint16_t kLengthZero = 0x0000;
+     static constexpr uint32_t kTimeoutMs = 2000;
+ };
+diff --git a/ios-client/src/protocol/clock_synchronizer.cpp b/ios-client/src/protocol/clock_synchronizer.cpp
+index 08cd111..6ab254f 100644
+--- a/ios-client/src/protocol/clock_synchronizer.cpp
++++ b/ios-client/src/protocol/clock_synchronizer.cpp
+@@ -80,11 +80,13 @@ uint64_t ClockSynchronizer::DeviceTimeToHostTime(uint64_t device_nanos) const no
+ }
+ 
+ wire::PacketHeader ClockSynchronizer::CreatePingPacket() noexcept {
+-    uint64_t corr = correlation_counter_++;
++    // A PING is always the same 16 bytes: length=16, magic 'ping', then the fixed 8-byte value
++    // 0x0000000100000000 (little-endian on the wire: 00 00 00 00 01 00 00 00). It carries no counter.
++    constexpr uint64_t kPingPayload = 0x0000000100000000ULL;
+     return wire::PacketHeader(
+         static_cast<uint32_t>(sizeof(wire::PacketHeader)),
+         wire::PacketMagic::Ping,
+-        corr
++        kPingPayload
+     );
+ }
+ 
+diff --git a/ios-client/src/protocol/stream_demuxer.cpp b/ios-client/src/protocol/stream_demuxer.cpp
+index 1be9450..c6ecd3d 100644
+--- a/ios-client/src/protocol/stream_demuxer.cpp
++++ b/ios-client/src/protocol/stream_demuxer.cpp
+@@ -226,23 +226,43 @@ void StreamDemuxer::Initialize(FormatChangeCallback format_callback) {
+     reassembly_offset_ = 0;
+     clock_sync_.Reset();
+     output_queue_.Reset();
++    device_ping_count_.store(0, std::memory_order_release);
+ }
+ 
+ void StreamDemuxer::Start() {
+     Stop();
+     ping_thread_ = std::jthread([this](std::stop_token stop_token) {
++        // Do not write anything until the device has sent its own PING (see Start() docs).
++        while (!stop_token.stop_requested() && !HasSeenDevicePing()) {
++            std::this_thread::sleep_for(std::chrono::milliseconds(20));
++        }
+         while (!stop_token.stop_requested()) {
+-            wire::PacketHeader ping = clock_sync_.CreatePingPacket();
+-            shared::ReadOnlyBuffer ping_buf(reinterpret_cast<const uint8_t*>(&ping), sizeof(ping));
+-            transport_.SendBulkData(ping_buf, 1000);
+-
++            // The reply to the device's own PING has just gone out; the first keep-alive is due 1 s later.
+             for (int i = 0; i < 20 && !stop_token.stop_requested(); ++i) {
+                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
+             }
++            if (stop_token.stop_requested()) {
++                break;
++            }
++
++            wire::PacketHeader ping = clock_sync_.CreatePingPacket();
++            shared::ReadOnlyBuffer ping_buf(reinterpret_cast<const uint8_t*>(&ping), sizeof(ping));
++            transport_.SendBulkData(ping_buf, 1000);
+         }
+     });
+ }
+ 
++bool StreamDemuxer::WaitForDevicePing(std::chrono::milliseconds timeout) const {
++    const auto deadline = std::chrono::steady_clock::now() + timeout;
++    while (!HasSeenDevicePing()) {
++        if (std::chrono::steady_clock::now() >= deadline) {
++            return false;
++        }
++        std::this_thread::sleep_for(std::chrono::milliseconds(5));
++    }
++    return true;
++}
++
+ void StreamDemuxer::Stop() noexcept {
+     if (ping_thread_.joinable()) {
+         ping_thread_.request_stop();
+@@ -312,9 +332,11 @@ void StreamDemuxer::ProcessCompletePacket(shared::ReadOnlyBuffer packet) {
+     } else if (header.magic == static_cast<uint32_t>(wire::PacketMagic::Asyn) || norm_magic == kAsynNorm) {
+         ProcessAsynPacket(header, payload);
+     } else if (header.magic == static_cast<uint32_t>(wire::PacketMagic::Ping) || norm_magic == kPingNorm) {
++        // Device-initiated PING: answer it, and only then mark the device as ready.
+         wire::PacketHeader ping = clock_sync_.CreatePingPacket();
+         shared::ReadOnlyBuffer ping_buf(reinterpret_cast<const uint8_t*>(&ping), sizeof(ping));
+         transport_.SendBulkData(ping_buf, 1000);
++        device_ping_count_.fetch_add(1, std::memory_order_acq_rel);
+     }
+ }
+ 
+diff --git a/ios-client/src/session/device_handshake.cpp b/ios-client/src/session/device_handshake.cpp
+index 1a75ec1..b8a3f03 100644
+--- a/ios-client/src/session/device_handshake.cpp
++++ b/ios-client/src/session/device_handshake.cpp
+@@ -1,5 +1,6 @@
+ #include "session/device_handshake.hpp"
+ 
++#include <chrono>
+ #include <cstring>
+ #include <iostream>
+ #include <vector>
+@@ -55,34 +56,19 @@ DeviceHandshake::DeviceHandshake(transport::IUsbTransport& transport, protocol::
+     : transport_(transport), clock_sync_(clock_sync) {}
+ 
+ shared::Result<void, HandshakeError> DeviceHandshake::ExecuteHandshake(const StreamConfiguration& config) {
+-    // Step 1: Send PING keep-alive packet (timeout 1000 ms)
+-    auto ping = clock_sync_.CreatePingPacket();
+-    shared::ReadOnlyBuffer ping_buf(reinterpret_cast<const uint8_t*>(&ping), sizeof(ping));
+-    auto ping_res = transport_.SendBulkData(ping_buf, 1000);
+-    if (ping_res.is_err()) {
+-        std::cerr << "[Handshake] Step 1 Send PING failed: " << static_cast<int>(ping_res.error()) << std::endl;
++    if (!device_ping_waiter_) {
++        std::cerr << "[Handshake] No device-PING source configured (SetDevicePingWaiter)" << std::endl;
+         return HandshakeError::TransportError;
+     }
+ 
+-    // Step 2: Send Clock Parameters (32-byte SYNC clok packet, timeout 1000 ms)
+-    auto clock_res = SendClockParameters();
+-    if (clock_res.is_err()) {
+-        std::cerr << "[Handshake] Step 2 SendClockParameters failed: " << static_cast<int>(clock_res.error()) << std::endl;
+-        return clock_res.error();
+-    }
+-
+-    // Step 3: Send Stream Parameters (28-byte SPRP need packet, timeout 1000 ms)
+-    auto stream_res = SendStreamParameters(config);
+-    if (stream_res.is_err()) {
+-        std::cerr << "[Handshake] Step 3 SendStreamParameters failed: " << static_cast<int>(stream_res.error()) << std::endl;
+-        return stream_res.error();
+-    }
+-
+-    // Step 4: Set Stream Enabled (SPRP vfmt XML property list, timeout 2000 ms)
+-    auto enable_res = SetStreamEnabled(true);
+-    if (enable_res.is_err()) {
+-        std::cerr << "[Handshake] Step 4 SetStreamEnabled failed: " << static_cast<int>(enable_res.error()) << std::endl;
+-        return enable_res.error();
++    // Wait for the iPhone to open the exchange. Nothing is written to Bulk OUT (0x05) until it has:
++    // the demuxer answers the device's PING itself as soon as it parses it.
++    if (!device_ping_waiter_(std::chrono::milliseconds(config.device_ping_timeout_ms))) {
++        std::cerr << "[Handshake] Timed out after " << config.device_ping_timeout_ms
++                  << " ms waiting for the device's PING on Bulk IN.\n"
++                  << "            The QuickTime USB mode is probably not armed (or is stale): unlock the phone, "
++                  << "replug it, and make sure usbmuxd is not resetting the configuration." << std::endl;
++        return HandshakeError::Timeout;
+     }
+ 
+     return {};
+diff --git a/ios-client/src/session/feed_session.cpp b/ios-client/src/session/feed_session.cpp
+index b70b036..2560978 100644
+--- a/ios-client/src/session/feed_session.cpp
++++ b/ios-client/src/session/feed_session.cpp
+@@ -1,5 +1,6 @@
+ #include "session/feed_session.hpp"
+ 
++#include <chrono>
+ #include <iostream>
+ #include <utility>
+ 
+@@ -140,6 +141,14 @@ shared::Result<void, SessionError> FeedSession::Start(const StreamConfiguration&
+ 
+     demuxer_->Start();
+ 
++    // The device can PING the moment the bulk-IN reads are queued, so the state must already accept
++    // incoming data; OnRawUsbDataReceived() drops everything outside NegotiatingHandshake/Streaming.
++    state_.store(SessionState::NegotiatingHandshake, std::memory_order_release);
++
++    handshake_->SetDevicePingWaiter([demuxer = demuxer_.get()](std::chrono::milliseconds timeout) {
++        return demuxer->WaitForDevicePing(timeout);
++    });
++
+     auto stream_res = transport_->StartStreaming([this](shared::ReadOnlyBuffer chunk) {
+         OnRawUsbDataReceived(chunk);
+     });
+@@ -151,14 +160,13 @@ shared::Result<void, SessionError> FeedSession::Start(const StreamConfiguration&
+         return SessionError::TransportStreamingFailed;
+     }
+ 
+-    state_.store(SessionState::NegotiatingHandshake, std::memory_order_release);
+-
+     auto hs_res = handshake_->ExecuteHandshake(config);
+     if (hs_res.is_err()) {
+         std::cerr << "[FeedSession] handshake_->ExecuteHandshake failed with error: "
+                   << static_cast<int>(hs_res.error()) << std::endl;
+         demuxer_->Stop();
+         transport_->StopStreaming();
++        transport_->DeactivateCoreMediaMode();
+         state_.store(SessionState::Error, std::memory_order_release);
+         return SessionError::HandshakeFailed;
+     }
+@@ -188,14 +196,13 @@ void FeedSession::Stop() noexcept {
+         return;
+     }
+ 
+-    if (handshake_) {
+-        handshake_->SetStreamEnabled(false);
+-    }
+     if (demuxer_) {
+         demuxer_->Stop();
+     }
+     if (transport_) {
+         transport_->StopStreaming();
++        // Switch the QuickTime USB config off so the next run starts from a clean device state.
++        transport_->DeactivateCoreMediaMode();
+     }
+ 
+     state_.store(SessionState::Disconnected, std::memory_order_release);
+diff --git a/ios-client/src/transport/usb_transport.cpp b/ios-client/src/transport/usb_transport.cpp
+index e919a95..72aea73 100644
+--- a/ios-client/src/transport/usb_transport.cpp
++++ b/ios-client/src/transport/usb_transport.cpp
+@@ -7,6 +7,7 @@
+ #include <iostream>
+ #include <memory>
+ #include <stop_token>
++#include <string>
+ #include <thread>
+ #include <vector>
+ 
+@@ -18,6 +19,51 @@
+ 
+ namespace ios::transport {
+ 
++namespace {
++
++/**
++ * @brief Finds the configuration that exposes the QuickTime/CoreMedia interface.
++ *
++ * The interface is vendor class 0xFF / subclass 0x2A (two bulk endpoints). iOS only lists a
++ * configuration containing it after the vendor "enable" request (see TriggerCoreMediaMode), so
++ * "listed" is also how we detect that the mode switch has happened.
++ *
++ * @return bConfigurationValue of that configuration, or -1 if no configuration exposes it.
++ */
++int FindQuickTimeConfigValue(libusb_device* dev) {
++    libusb_device_descriptor desc{};
++    if (!dev || libusb_get_device_descriptor(dev, &desc) != 0) {
++        return -1;
++    }
++
++    for (uint8_t c = 0; c < desc.bNumConfigurations; ++c) {
++        libusb_config_descriptor* cfg = nullptr;
++        if (libusb_get_config_descriptor(dev, c, &cfg) != 0 || !cfg) {
++            continue;
++        }
++
++        int found = -1;
++        for (uint8_t i = 0; i < cfg->bNumInterfaces && found < 0; ++i) {
++            for (int a = 0; a < cfg->interface[i].num_altsetting; ++a) {
++                const auto& alt = cfg->interface[i].altsetting[a];
++                if (alt.bInterfaceClass == wire::CoreMediaInterfaceSpec::kInterfaceClassVendor &&
++                    alt.bInterfaceSubClass == wire::CoreMediaInterfaceSpec::kInterfaceSubClassAvFeed) {
++                    found = cfg->bConfigurationValue;
++                    break;
++                }
++            }
++        }
++        libusb_free_config_descriptor(cfg);
++
++        if (found >= 0) {
++            return found;
++        }
++    }
++    return -1;
++}
++
++} // namespace
++
+ class LibUsbTransport::Impl {
+ public:
+     static constexpr size_t kTransferPoolSize = 16;
+@@ -141,75 +187,93 @@ public:
+         return {};
+     }
+ 
++    /**
++     * @brief Arms the iOS "Valeria"/QuickTime USB configuration.
++     *
++     * The enable request is a vendor control transfer with direction Host-to-Device:
++     *   bmRequestType=0x40, bRequest=0x52, wValue=0, wIndex=2, wLength=0.
++     * (wIndex=0 is the matching *disable*.) The phone then drops off the bus and re-enumerates with an
++     * extra configuration containing the 0xFF/0x2A bulk interface, so the old handle becomes invalid and the
++     * device must be re-opened. An earlier version issued this as a Device-to-Host (0xC0) read, which
++     * does not arm the interface: both bulk endpoints then time out with 0 bytes.
++     */
+     shared::Result<void, UsbTransportError> TriggerCoreMediaMode() {
+         if (!handle_) {
+             return UsbTransportError::NotConnected;
+         }
+ 
+-        // Primary: AV mode vendor IN request (0xC0, bRequest=0x52, wIndex=0x0002)
+-        uint8_t mode_resp = 0;
+-        int ret = libusb_control_transfer(
+-            handle_,
+-            0xC0,
+-            wire::UsbControlSetup::kRequestQuickTime,
+-            wire::UsbControlSetup::kValueDefault,
+-            wire::UsbControlSetup::kIndexModeAv,
+-            &mode_resp,
+-            1,
+-            wire::UsbControlSetup::kTimeoutMs
+-        );
++        using namespace std::chrono_literals;
++        auto has_qt = [](libusb_device* d) { return FindQuickTimeConfigValue(d) >= 0; };
++        auto no_qt = [](libusb_device* d) { return FindQuickTimeConfigValue(d) < 0; };
+ 
+-        if (ret < 0) {
+-            // Fallback: AV mode vendor OUT transfer (0x40)
+-            ret = libusb_control_transfer(
+-                handle_,
+-                wire::UsbControlSetup::kVendorTypeOut,    // 0x40
+-                wire::UsbControlSetup::kRequestQuickTime,  // 0x52
+-                wire::UsbControlSetup::kValueDefault,     // 0x0000
+-                wire::UsbControlSetup::kIndexModeAv,      // 0x0002
+-                nullptr,
+-                wire::UsbControlSetup::kLengthZero,       // 0x0000
+-                wire::UsbControlSetup::kTimeoutMs         // 2000
+-            );
++        // The QuickTime config being listed but silent usually means an earlier run never switched it off
++        // (crash, Ctrl+C). The device only starts the PING exchange when the config is freshly activated,
++        // so cycle it off and on again to get a clean state.
++        if (has_qt(libusb_get_device(handle_))) {
++            std::cerr << "[UsbTransport] QuickTime config already listed; cycling it to clear stale state\n";
++            SendQuickTimeModeControl(wire::UsbControlSetup::kIndexModeLegacy);
++            if (!WaitForReenumeration(no_qt, 6000ms)) {
++                std::cerr << "[UsbTransport] QuickTime config did not drop; continuing with current state\n";
++            }
++            if (!handle_) {
++                return UsbTransportError::NotConnected;
++            }
+         }
+ 
+-        if (ret < 0) {
+-            // Fallback: Legacy mode (wIndex = 0x0000)
+-            ret = libusb_control_transfer(
+-                handle_,
+-                wire::UsbControlSetup::kVendorTypeOut,
+-                wire::UsbControlSetup::kRequestQuickTime,
+-                wire::UsbControlSetup::kValueDefault,
+-                wire::UsbControlSetup::kIndexModeLegacy, // 0x0000
+-                nullptr,
+-                wire::UsbControlSetup::kLengthZero,
+-                wire::UsbControlSetup::kTimeoutMs
+-            );
+-            if (ret < 0) {
+-                return UsbTransportError::VendorControlFailed;
+-            }
++        int ret = SendQuickTimeModeControl(wire::UsbControlSetup::kIndexModeAv);
++        if (ret == LIBUSB_ERROR_ACCESS || ret == LIBUSB_ERROR_NOT_SUPPORTED) {
++            std::cerr << "[UsbTransport] Mode switch control transfer rejected: "
++                      << libusb_error_name(ret) << " (check udev rules / permissions)\n";
++            return UsbTransportError::VendorControlFailed;
++        }
++        // Other errors are expected: the phone can disconnect before the transfer is acknowledged.
++        // The real test is whether the QuickTime config shows up after re-enumeration.
++
++        if (!WaitForReenumeration(has_qt, 10000ms)) {
++            std::cerr << "[UsbTransport] Device did not re-enumerate with a QuickTime configuration "
++                      << "(unlock the phone, accept 'Trust', or replug the cable)\n";
++            return UsbTransportError::VendorControlFailed;
+         }
+ 
+         return {};
+     }
+ 
++    /**
++     * @brief Best-effort switch-off of the QuickTime config so the next run starts clean.
++     */
++    void DeactivateCoreMediaMode() noexcept {
++        if (!handle_) {
++            return;
++        }
++        StopStreaming();
++        SendQuickTimeModeControl(wire::UsbControlSetup::kIndexModeLegacy);
++    }
++
+     shared::Result<void, UsbTransportError> ClaimCoreMediaInterface() {
+         if (!handle_) {
+             return UsbTransportError::NotConnected;
+         }
+ 
+-        // Switch to configuration 5 (Valeria / AV streaming) if available
++        // Select whichever configuration exposes the QuickTime interface (5 on the iPhone 16 seen so far,
++        // but the number is not fixed, so look it up instead of hard-coding it).
++        const int qt_cfg = FindQuickTimeConfigValue(libusb_get_device(handle_));
++        if (qt_cfg < 0) {
++            std::cerr << "[UsbTransport] No USB configuration exposes the QuickTime interface; "
++                      << "the mode switch has not been applied\n";
++            return UsbTransportError::InterfaceNotFound;
++        }
++
+         int cur_cfg = 0;
+-        if (libusb_get_configuration(handle_, &cur_cfg) == 0 && cur_cfg != 5) {
++        if (libusb_get_configuration(handle_, &cur_cfg) == 0 && cur_cfg != qt_cfg) {
+             libusb_set_auto_detach_kernel_driver(handle_, 1);
+             for (int iface_idx = 0; iface_idx < 5; ++iface_idx) {
+                 if (libusb_kernel_driver_active(handle_, iface_idx) == 1) {
+                     libusb_detach_kernel_driver(handle_, iface_idx);
+                 }
+             }
+-            int set_cfg = libusb_set_configuration(handle_, 5);
++            int set_cfg = libusb_set_configuration(handle_, qt_cfg);
+             if (set_cfg != 0) {
+-                std::cerr << "[UsbTransport] Failed to set configuration 5 (error: "
++                std::cerr << "[UsbTransport] Failed to set configuration " << qt_cfg << " (error: "
+                           << set_cfg << ", " << libusb_error_name(set_cfg) << ")\n";
+                 if (set_cfg == LIBUSB_ERROR_BUSY) {
+                     std::cerr << "[UsbTransport] Error: USB device is busy. "
+@@ -475,6 +539,44 @@ public:
+     }
+ 
+ private:
++    int SendQuickTimeModeControl(uint16_t w_index) noexcept {
++        return libusb_control_transfer(
++            handle_,
++            wire::UsbControlSetup::kVendorTypeOut,     // 0x40: Host-to-Device | Vendor | Device
++            wire::UsbControlSetup::kRequestQuickTime,  // 0x52
++            wire::UsbControlSetup::kValueDefault,      // wValue = 0
++            w_index,                                   // 2 = enable, 0 = disable
++            nullptr,
++            wire::UsbControlSetup::kLengthZero,
++            wire::UsbControlSetup::kTimeoutMs);
++    }
++
++    /**
++     * @brief Drops the current handle and polls until the same device (by serial) is back on the bus
++     * and @p predicate accepts it. Leaves handle_ open on success.
++     */
++    template <typename Pred>
++    bool WaitForReenumeration(Pred predicate, std::chrono::milliseconds timeout) {
++        const std::string serial = device_serial_;
++        CloseDevice();
++
++        const auto deadline = std::chrono::steady_clock::now() + timeout;
++        while (std::chrono::steady_clock::now() < deadline) {
++            std::this_thread::sleep_for(std::chrono::milliseconds(500));
++
++            // PID 0 = any Apple PID, since the product id can change between USB modes.
++            auto res = OpenDevice(wire::CoreMediaInterfaceSpec::kAppleVendorId, 0, serial);
++            if (res.is_err()) {
++                continue;  // still re-enumerating
++            }
++            if (predicate(libusb_get_device(handle_))) {
++                return true;
++            }
++            // Present but not yet in the expected state (old pre-reset instance): keep polling.
++        }
++        return false;
++    }
++
+     bool AllocateTransferPool() {
+         transfer_pool_.resize(kTransferPoolSize);
+         for (size_t i = 0; i < kTransferPoolSize; ++i) {
+@@ -626,6 +728,10 @@ shared::Result<void, UsbTransportError> LibUsbTransport::ClaimCoreMediaInterface
+     return impl_->ClaimCoreMediaInterface();
+ }
+ 
++void LibUsbTransport::DeactivateCoreMediaMode() noexcept {
++    impl_->DeactivateCoreMediaMode();
++}
++
+ shared::Result<void, UsbTransportError> LibUsbTransport::StartStreaming(UsbDataCallback callback) {
+     return impl_->StartStreaming(std::move(callback));
+ }
+diff --git a/ios-client/tests/test_feed_session.cpp b/ios-client/tests/test_feed_session.cpp
+index 7ee2574..0fb61e7 100644
+--- a/ios-client/tests/test_feed_session.cpp
++++ b/ios-client/tests/test_feed_session.cpp
+@@ -6,6 +6,7 @@
+ #include "../src/session/feed_session.cpp"
+ #endif
+ 
++#include <atomic>
+ #include <cassert>
+ #include <chrono>
+ #include <cstring>
+@@ -179,8 +180,8 @@ public:
+ 
+     shared::Result<void, ios::transport::UsbTransportError> StartStreaming(
+         ios::transport::UsbDataCallback callback) override {
+-        streaming_active = true;
+         data_callback = std::move(callback);
++        streaming_active = true;  // set after the callback so another thread can safely inject data
+         return {};
+     }
+ 
+@@ -220,11 +221,35 @@ public:
+     std::string opened_serial;
+     bool core_media_triggered{false};
+     bool interface_claimed{false};
+-    bool streaming_active{false};
++    std::atomic<bool> streaming_active{false};
+     ios::transport::UsbDataCallback data_callback;
+     std::vector<std::vector<uint8_t>> sent_data;
+ };
+ 
++// 16-byte PING exactly as the iPhone sends it: length=16, magic 'ping' (0x70696E67), 0x0000000100000000.
++std::vector<uint8_t> MakeDevicePing() {
++    std::vector<uint8_t> ping(16, 0);
++    const uint32_t len = 16;
++    const uint32_t magic = 0x70696E67;
++    const uint64_t payload = 0x0000000100000000ULL;
++    std::memcpy(ping.data(), &len, 4);
++    std::memcpy(ping.data() + 4, &magic, 4);
++    std::memcpy(ping.data() + 8, &payload, 8);
++    return ping;
++}
++
++// Plays the iPhone: stays silent until the host has queued its bulk-IN reads, then sends its PING.
++std::thread StartDevicePingInjector(MockTransport* transport) {
++    return std::thread([transport]() {
++        for (int i = 0; i < 400 && !transport->streaming_active.load(); ++i) {
++            std::this_thread::sleep_for(std::chrono::milliseconds(5));
++        }
++        std::this_thread::sleep_for(std::chrono::milliseconds(50));
++        auto ping = MakeDevicePing();
++        transport->SimulateIncomingData(shared::ReadOnlyBuffer(ping.data(), ping.size()));
++    });
++}
++
+ void SetupValidPairRecord(const std::string& dir, const std::string& udid) {
+     std::filesystem::create_directories(dir);
+     std::string plist_path = dir + "/" + udid + ".plist";
+@@ -269,13 +294,23 @@ void TestSuccessfulSessionLifecycle() {
+     // 2. Start streaming & handshake
+     bool frame_notified = false;
+     ios::session::StreamConfiguration config{60, true, 1920, 1080};
++    // The device opens the exchange with its own PING; the host only answers.
++    std::thread device = StartDevicePingInjector(transport_ptr);
+     auto start_res = session.Start(config, [&frame_notified]() {
+         frame_notified = true;
+     });
++    device.join();
+     assert(start_res.is_ok());
+     assert(session.GetState() == ios::session::SessionState::Streaming);
+     assert(transport_ptr->streaming_active);
+-    assert(transport_ptr->sent_data.size() == 4); // PING, clok, need, vfmt
++
++    // Exactly one write so far: the reply PING (no host-initiated packets).
++    {
++        std::lock_guard<std::mutex> lock(transport_ptr->mutex_);
++        assert(transport_ptr->sent_data.size() == 1);
++        const auto expected = MakeDevicePing();
++        assert(transport_ptr->sent_data[0] == expected);
++    }
+ 
+     // 3. Ingest a video sample via transport
+     uint8_t nalu[] = {0x65, 0x88, 0x84, 0x00, 0x10}; // IDR
+@@ -324,6 +359,33 @@ void TestSuccessfulSessionLifecycle() {
+     std::cout << "[Test] TestSuccessfulSessionLifecycle passed." << std::endl;
+ }
+ 
++void TestNoDevicePingTimesOutWithoutWriting() {
++    std::cout << "[Test] Running TestNoDevicePingTimesOutWithoutWriting..." << std::endl;
++
++    SetupValidPairRecord(kTestDir, "TEST-UDID-12345");
++    ::setenv("USBMUXD_LOCKDOWN_PATH", kTestDir.c_str(), 1);
++
++    auto mock_muxd = std::make_unique<ios::transport::UsbmuxdClient>(kMockSocketPath);
++    auto mock_transport = std::make_unique<MockTransport>();
++    auto* transport_ptr = mock_transport.get();
++
++    ios::session::FeedSession session(std::move(mock_muxd), std::move(mock_transport));
++    assert(session.Connect().is_ok());
++
++    ios::session::StreamConfiguration config{};
++    config.device_ping_timeout_ms = 300;  // device never speaks
++    auto res = session.Start(config, []() {});
++
++    assert(res.is_err());
++    assert(res.error() == ios::session::SessionError::HandshakeFailed);
++    {
++        // Regression check for the Bulk OUT timeout: nothing may be written before the device has spoken.
++        std::lock_guard<std::mutex> lock(transport_ptr->mutex_);
++        assert(transport_ptr->sent_data.empty());
++    }
++    std::cout << "[Test] TestNoDevicePingTimesOutWithoutWriting passed." << std::endl;
++}
++
+ void TestPairingFailure() {
+     std::cout << "[Test] Running TestPairingFailure..." << std::endl;
+     std::string unpair_dir = "/tmp/mock_unpaired_dir";
+@@ -370,6 +432,7 @@ int main() {
+     std::this_thread::sleep_for(std::chrono::milliseconds(50));
+ 
+     TestSuccessfulSessionLifecycle();
++    TestNoDevicePingTimesOutWithoutWriting();
+     TestPairingFailure();
+     TestDeviceNotConnectedFailure(server);
+ 
+diff --git a/ios-client/tests/test_stream_demuxer.cpp b/ios-client/tests/test_stream_demuxer.cpp
+index 1c5de5b..425bd9e 100644
+--- a/ios-client/tests/test_stream_demuxer.cpp
++++ b/ios-client/tests/test_stream_demuxer.cpp
+@@ -352,22 +352,39 @@ void TestFormatDescriptorParsing() {
+ }
+ 
+ void TestPingHeartbeat() {
+-    std::cout << "[Test] Running Heartbeat Ping Thread test..." << std::endl;
++    std::cout << "[Test] Running device-initiated PING / heartbeat test..." << std::endl;
+     MockTransport transport;
+     ios::protocol::StreamDemuxer demuxer(transport);
+     demuxer.Initialize(nullptr);
+ 
++    // 1. The host must not speak first: no writes before the device's PING.
+     demuxer.Start();
+     std::this_thread::sleep_for(std::chrono::milliseconds(250));
+-    demuxer.Stop();
++    assert(transport.GetSentCount() == 0);
++    assert(!demuxer.HasSeenDevicePing());
++    assert(!demuxer.WaitForDevicePing(std::chrono::milliseconds(20)));
++
++    // 2. Device PING (0x70696E67, 0x0000000100000000) is answered immediately with the same 16 bytes.
++    uint8_t device_ping[16] = {0};
++    const uint32_t len = 16, magic = 0x70696E67;
++    const uint64_t payload = 0x0000000100000000ULL;
++    std::memcpy(device_ping, &len, 4);
++    std::memcpy(device_ping + 4, &magic, 4);
++    std::memcpy(device_ping + 8, &payload, 8);
++    demuxer.IngestRawData(shared::ReadOnlyBuffer(device_ping, sizeof(device_ping)));
++
++    assert(demuxer.HasSeenDevicePing());
++    assert(demuxer.WaitForDevicePing(std::chrono::milliseconds(0)));
++    assert(transport.GetSentCount() == 1);
++    auto reply = transport.GetLastSentPacket();
++    assert(reply.size() == 16);
++    assert(std::memcmp(reply.data(), device_ping, 16) == 0);
+ 
+-    // At least one PING packet should have been transmitted
+-    assert(transport.GetSentCount() >= 1);
+-    auto ping_pkt = transport.GetLastSentPacket();
+-    assert(ping_pkt.size() == sizeof(ios::protocol::wire::PacketHeader));
+-    const auto* hdr = reinterpret_cast<const ios::protocol::wire::PacketHeader*>(ping_pkt.data());
+-    assert(hdr->magic == static_cast<uint32_t>(ios::protocol::wire::PacketMagic::Ping));
+-    std::cout << "[Test] Heartbeat Ping Thread test passed." << std::endl;
++    // 3. Afterwards the 1 Hz keep-alive runs.
++    std::this_thread::sleep_for(std::chrono::milliseconds(1300));
++    demuxer.Stop();
++    assert(transport.GetSentCount() >= 2);
++    std::cout << "[Test] Device-initiated PING / heartbeat test passed." << std::endl;
+ }
+ 
+ } // namespace

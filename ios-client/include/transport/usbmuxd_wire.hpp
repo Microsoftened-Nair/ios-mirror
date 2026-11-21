@@ -75,8 +75,8 @@ struct UsbControlSetup {
     static constexpr uint8_t kVendorTypeOut = 0x40;
     static constexpr uint8_t kRequestQuickTime = 0x52;
     static constexpr uint16_t kValueDefault = 0x0000;
-    static constexpr uint16_t kIndexModeAv = 0x0002;
-    static constexpr uint16_t kIndexModeLegacy = 0x0000;
+    static constexpr uint16_t kIndexModeAv = 0x0002;      // enable hidden QuickTime (Valeria) USB config
+    static constexpr uint16_t kIndexModeLegacy = 0x0000;  // wIndex 0 = DISABLE the QuickTime config again
     static constexpr uint16_t kLengthZero = 0x0000;
     static constexpr uint32_t kTimeoutMs = 2000;
 };

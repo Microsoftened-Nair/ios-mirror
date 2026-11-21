@@ -2,6 +2,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -212,9 +213,27 @@ public:
     void Initialize(FormatChangeCallback format_callback);
 
     /**
-     * @brief Starts background PING keep-alive heartbeat loop (1 Hz) on std::jthread.
+     * @brief Starts the background PING keep-alive loop (1 Hz) on std::jthread.
+     *
+     * The iPhone speaks first: it sends the initial PING and the host answers it (done in the packet
+     * handler). The keep-alive therefore stays silent until the device's first PING has been seen,
+     * so the host never writes to Bulk OUT before the device's streaming state machine is ready.
      */
     void Start();
+
+    /**
+     * @brief Blocks until the device's first PING has arrived on Bulk IN (and has been answered), or
+     * the timeout expires.
+     * @return true if the device PING was seen.
+     */
+    bool WaitForDevicePing(std::chrono::milliseconds timeout) const;
+
+    /**
+     * @brief True once at least one PING has been received from the device since Initialize().
+     */
+    bool HasSeenDevicePing() const noexcept {
+        return device_ping_count_.load(std::memory_order_acquire) > 0;
+    }
 
     /**
      * @brief Requests stop on heartbeat thread and safely joins.
@@ -255,6 +274,10 @@ private:
     void ProcessAsynPacket(const wire::PacketHeader& header, shared::ReadOnlyBuffer payload);
     bool ExtractAvccSlices(shared::ReadOnlyBuffer avcc_data, uint64_t pts_nanos, uint64_t duration_nanos, bool is_keyframe);
     bool ParseAvccFormatDescriptor(shared::ReadOnlyBuffer vfmt_payload, FormatDescriptor& out_desc);
+    void SendHpd1();
+    void SendHpa1(uint64_t device_clock_ref);
+    void SendNeed(uint64_t clock_ref);
+    void SendClockRefReply(uint64_t correlation_id, uint64_t clock_ref);
 
     transport::IUsbTransport& transport_;
     ClockSynchronizer clock_sync_;
@@ -265,6 +288,8 @@ private:
     size_t reassembly_offset_{0};
 
     std::jthread ping_thread_;
+    std::atomic<uint64_t> device_ping_count_{0};
+    std::atomic<uint64_t> video_clock_ref_{0};
 };
 
 } // namespace ios::protocol

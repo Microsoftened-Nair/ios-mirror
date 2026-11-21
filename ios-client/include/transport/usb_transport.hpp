@@ -113,6 +113,13 @@ public:
         uint16_t vid, uint16_t pid, std::string_view serial = "") = 0;
     virtual shared::Result<void, UsbTransportError> TriggerCoreMediaMode() = 0;
     virtual shared::Result<void, UsbTransportError> ClaimCoreMediaInterface() = 0;
+    /**
+     * @brief Turns the hidden QuickTime/CoreMedia USB configuration back off (vendor OUT 0x52, wIndex=0).
+     *
+     * Called at teardown so the next run starts from a clean device state. Default is a no-op so
+     * test doubles do not need to implement it.
+     */
+    virtual void DeactivateCoreMediaMode() noexcept {}
     virtual shared::Result<void, UsbTransportError> StartStreaming(UsbDataCallback callback) = 0;
     virtual void StopStreaming() noexcept = 0;
     virtual shared::Result<size_t, UsbTransportError> SendBulkData(
@@ -143,6 +150,7 @@ public:
         uint16_t vid, uint16_t pid, std::string_view serial = "") override;
     shared::Result<void, UsbTransportError> TriggerCoreMediaMode() override;
     shared::Result<void, UsbTransportError> ClaimCoreMediaInterface() override;
+    void DeactivateCoreMediaMode() noexcept override;
     shared::Result<void, UsbTransportError> StartStreaming(UsbDataCallback callback) override;
     shared::Result<void, UsbTransportError> StartStreaming(RawBlockCallback callback);
     void StopStreaming() noexcept override;
